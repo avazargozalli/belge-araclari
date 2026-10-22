@@ -62,7 +62,10 @@ jobs:
         run: cargo test --release --manifest-path src-tauri/Cargo.toml --locked
 
       - name: Build installer
-        run: npx tauri build --ci -- --locked
+        run: |
+          # The Rust cache restores target/, so drop installers left over from earlier versions.
+          rm -rf src-tauri/target/release/bundle
+          npx tauri build --ci -- --locked
 
       - name: Install silently and check startup
         shell: pwsh
