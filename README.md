@@ -22,12 +22,12 @@
 | PDF Küçült | Resimden PDF'e |
 |---|---|
 | <img src="docs/screenshots/pdf-kucult.webp" alt="PDF Küçült"> | <img src="docs/screenshots/resimden-pdf.webp" alt="Resimden PDF'e"> |
-| **PDF Birleştir** | **PDF Böl** |
-| <img src="docs/screenshots/pdf-birlestir.webp" alt="PDF Birleştir"> | <img src="docs/screenshots/pdf-bol.webp" alt="PDF Böl"> |
-| **Sayfaları Düzenle** | **PDF'ten Resme** |
-| <img src="docs/screenshots/sayfalari-duzenle.webp" alt="Sayfaları Düzenle"> | <img src="docs/screenshots/pdften-resme.webp" alt="PDF'ten Resme"> |
-| **PDF Şifrele** | |
-| <img src="docs/screenshots/pdf-sifrele.webp" alt="PDF Şifrele"> | |
+| **UDF'ten PDF'e** | **PDF Birleştir** |
+| <img src="docs/screenshots/udften-pdf.webp" alt="UDF'ten PDF'e"> | <img src="docs/screenshots/pdf-birlestir.webp" alt="PDF Birleştir"> |
+| **PDF Böl** | **Sayfaları Düzenle** |
+| <img src="docs/screenshots/pdf-bol.webp" alt="PDF Böl"> | <img src="docs/screenshots/sayfalari-duzenle.webp" alt="Sayfaları Düzenle"> |
+| **PDF'ten Resme** | **PDF Şifrele** |
+| <img src="docs/screenshots/pdften-resme.webp" alt="PDF'ten Resme"> | <img src="docs/screenshots/pdf-sifrele.webp" alt="PDF Şifrele"> |
 
 ## Özellikler
 
