@@ -1,0 +1,18 @@
+{
+  "name": "belge-araclari-windows",
+  "version": "1.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Belge Araçları — Windows sürümü (Tauri). Geliştiren: Azar Gozalli",
+  "license": "MIT",
+  "scripts": {
+    "vendor": "node scripts/copy-vendor.mjs",
+    "dev": "tauri dev",
+    "build": "tauri build",
+    "tauri": "tauri"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.11.0",
+    "pdfjs-dist": "^6.4.299"
+  }
+}

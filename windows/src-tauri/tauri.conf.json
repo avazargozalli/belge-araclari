@@ -1,0 +1,49 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Belge Araçları",
+  "mainBinaryName": "BelgeAraclari",
+  "version": "1.1.0",
+  "identifier": "com.azargozalli.belgearaclari",
+  "build": {
+    "frontendDist": "../ui",
+    "beforeBuildCommand": "npm run vendor",
+    "beforeDevCommand": "npm run vendor"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "label": "main",
+        "title": "Belge Araçları",
+        "width": 1200,
+        "height": 800,
+        "minWidth": 980,
+        "minHeight": 660,
+        "center": true,
+        "dragDropEnabled": true
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; font-src 'self'; worker-src 'self' blob:; connect-src 'self' ipc: http://ipc.localhost; object-src 'none'; base-uri 'none'; form-action 'none'"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "publisher": "Azar Gozalli",
+    "copyright": "© 2026 Azar Gozalli · MIT",
+    "category": "Productivity",
+    "shortDescription": "Çevrimdışı PDF araçları",
+    "longDescription": "PDF küçültme, resimden PDF, birleştirme, bölme, sayfa düzenleme, PDF'ten resme ve şifreleme. Tamamen çevrimdışı çalışır.",
+    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.icns", "icons/icon.ico"],
+    "windows": {
+      "webviewInstallMode": { "type": "embedBootstrapper" },
+      "nsis": {
+        "installMode": "currentUser",
+        "installerIcon": "icons/icon.ico",
+        "languages": ["Turkish", "English"],
+        "displayLanguageSelector": false
+      }
+    }
+  }
+}

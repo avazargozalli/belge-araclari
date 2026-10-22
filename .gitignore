@@ -3,3 +3,8 @@ dist/
 .DS_Store
 *.xcodeproj/xcuserdata/
 .swiftpm/
+windows/node_modules/
+windows/ui/vendor/
+windows/src-tauri/target/
+windows/src-tauri/gen/
+.claude/

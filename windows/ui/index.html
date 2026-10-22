@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Belge Araçları</title>
+  <link rel="stylesheet" href="styles.css">
+  <script type="module" src="app.js"></script>
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="brand">
+        <img src="icon.png" alt="" width="34" height="34">
+        <div>
+          <strong>Belge Araçları</strong>
+          <span>PDF araç kutusu</span>
+        </div>
+      </div>
+      <nav id="nav" aria-label="Araçlar"></nav>
+      <div class="sidebar-foot">
+        <div class="offline-note">
+          <span class="ico shield" data-icon="shield"></span>
+          <div>
+            <strong>Tamamen çevrimdışı</strong>
+            <span>Dosyalar bu bilgisayardan çıkmaz</span>
+          </div>
+        </div>
+        <button class="settings-link" id="open-settings" type="button"><span data-icon="settings"></span>Ayarlar</button>
+        <button class="signature" id="open-about" type="button">
+          <strong>AZAR GOZALLI</strong>
+          <span>Belge Araçları · v<span id="version">1.1.0</span></span>
+        </button>
+      </div>
+    </aside>
+    <main id="main" tabindex="-1"></main>
+  </div>
+
+  <div class="drop-overlay" id="drop-overlay" aria-hidden="true">
+    <div><span data-icon="download"></span><strong>Dosyaları bırakın</strong></div>
+  </div>
+
+  <dialog id="settings-dialog" class="modal">
+    <form method="dialog">
+      <h2>Ayarlar</h2>
+      <fieldset>
+        <legend>Kaydetme konumu</legend>
+        <label class="radio"><input type="radio" name="outMode" value="next"> Orijinal dosyanın yanına</label>
+        <label class="radio"><input type="radio" name="outMode" value="folder"> Seçtiğim klasöre</label>
+        <div class="folder-row" id="folder-row">
+          <span id="folder-path">Klasör seçilmedi</span>
+          <button type="button" class="btn" id="choose-folder">Seç…</button>
+        </div>
+        <p class="hint">Orijinal dosyalar hiçbir zaman değiştirilmez veya üzerine yazılmaz.</p>
+      </fieldset>
+      <fieldset>
+        <legend>PDF küçültme motoru</legend>
+        <label class="switch-row"><input type="checkbox" id="use-gs"> Ghostscript yüklüyse onu da dene</label>
+        <p class="hint" id="gs-status"></p>
+      </fieldset>
+      <div class="modal-actions"><button class="btn primary" value="close">Tamam</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="about-dialog" class="modal about">
+    <form method="dialog">
+      <img src="icon.png" alt="" width="96" height="96">
+      <h2>Belge Araçları</h2>
+      <p class="muted">Sürüm <span id="about-version">1.1.0</span> · Windows</p>
+      <p>PDF küçültme, resimden PDF, birleştirme, bölme, sayfa düzenleme ve şifreleme. Tamamen yerel çalışır; hiçbir dosya veya veri internete gönderilmez.</p>
+      <hr>
+      <p class="eyebrow">GELİŞTİREN</p>
+      <p class="maker">AZAR GOZALLI</p>
+      <p class="muted small">Açık kaynak · MIT Lisansı · © 2026</p>
+      <div class="modal-actions center"><button class="btn primary" value="close">Kapat</button></div>
+    </form>
+  </dialog>
+</body>
+</html>

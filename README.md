@@ -5,7 +5,7 @@
 <h1 align="center">Belge Araçları</h1>
 
 <p align="center">
-  macOS için tamamen <b>çevrimdışı</b> çalışan, hafif ve açık kaynak PDF araç kutusu.<br>
+  <b>macOS</b> ve <b>Windows</b> için tamamen <b>çevrimdışı</b> çalışan, hafif ve açık kaynak PDF araç kutusu.<br>
   Dosyalarınız hiçbir zaman bilgisayarınızdan çıkmaz.
 </p>
 
@@ -47,6 +47,7 @@
 - PDF küçültme, sonuç orijinalden büyük çıkarsa yeni dosya oluşturmaz.
 - Finder'da PDF veya resimleri Dock simgesinin üzerine bırakabilir veya "Birlikte Aç" menüsünden kullanabilirsiniz.
 - Açık ve koyu görünüm desteklenir. Apple Silicon ve Intel Mac'lerde çalışır (macOS 14 Sonoma ve üzeri).
+- **Windows 10 ve 11** için ayrı bir sürüm vardır (aşağıya bakın). Arayüz ve araçlar aynıdır. Tek fark: Windows sürümü HEIC fotoğrafları okumaz; önce JPG olarak kaydedin.
 
 ### PDF küçültme nasıl çalışır?
 
@@ -58,7 +59,11 @@ Uygulama birkaç yerel yöntemi dener ve **en küçük geçerli sonucu** seçer:
 
 Her sonuç sayfa sayısıyla doğrulanır.
 
+Windows sürümünde yerleşik motor Rust ile yazılmıştır: PDF içindeki görselleri paralel olarak yeniden JPEG'e kodlar ve küçültür; metin ve vektör içerik olduğu gibi kalır. Ghostscript kuruluysa (`C:\Program Files\gs`) o da denenir.
+
 ## Kurulum
+
+### macOS
 
 1. [Releases](../../releases) sayfasından `Belge-Araclari-x.y.z.dmg` dosyasını indirin.
 2. DMG'yi açıp **Belge Araçları** simgesini **Applications** klasörüne sürükleyin.
@@ -66,6 +71,14 @@ Her sonuç sayfa sayısıyla doğrulanır.
    - Uygulamaya sağ tıklayıp **Aç** seçeneğini seçin, **ya da**
    - **Sistem Ayarları → Gizlilik ve Güvenlik** bölümünden "Yine de Aç" butonuna basın, **ya da**
    - Terminal'de şu komutu çalıştırın: `xattr -cr "/Applications/Belge Araçları.app"`
+
+### Windows
+
+1. [Releases](../../releases) sayfasından `Belge Araçları_x.y.z_x64-setup.exe` dosyasını indirin.
+2. Kurulum dosyasını çalıştırın. Yönetici izni gerekmez; uygulama yalnızca sizin kullanıcı hesabınıza kurulur.
+3. Kurulum dosyası dijital olarak imzalanmadığı için Windows SmartScreen "Windows bilgisayarınızı korudu" uyarısı gösterebilir. **Ek bilgi → Yine de çalıştır** ile devam edin.
+
+Uygulama arayüz için Windows'ta yerleşik olan Microsoft Edge WebView2'yi kullanır (Windows 11'de ve güncel Windows 10'da zaten kuruludur). Yalnızca eksikse kurulum sırasında Microsoft'tan indirilir; uygulamanın kendisi hiçbir zaman internete bağlanmaz.
 
 ## Kaynaktan derleme
 
@@ -79,6 +92,17 @@ cd belge-araclari
 ```
 
 Geliştirme sırasında doğrudan çalıştırmak için: `swift run`
+
+### Windows sürümü
+
+Node.js 22+ ve Rust (stable) gerekir. Windows kurulum dosyası her `main` güncellemesinde GitHub Actions tarafından Windows üzerinde derlenir, test edilir ve sessizce kurulup açılarak denenir. Yeni bir Release yayımlandığında kurulum dosyası otomatik olarak o sürüme eklenir.
+
+```bash
+cd windows
+npm ci
+cargo test --manifest-path src-tauri/Cargo.toml   # PDF motoru testleri (her platformda çalışır)
+npm run build                                      # Windows'ta: kurulum dosyası üretir
+```
 
 ## Proje yapısı
 
@@ -95,6 +119,11 @@ Sources/BelgeAraclari/
 Scripts/
   build.sh                   .app + .dmg paketleme
   make_icon.swift            Uygulama ikonunu çizer
+windows/                     Windows sürümü (Tauri 2)
+  src-tauri/src/engine/      PDF motoru (Rust, lopdf): küçült, resimden PDF, birleştir, böl, şifrele
+  src-tauri/src/lib.rs       Arayüz ile motor arasındaki komutlar
+  ui/                        Arayüz (HTML/CSS/JS); sayfa görüntüleme için yerel pdf.js
+.github/workflows/windows.yml  Windows derleme, test ve kurulum dosyası
 ```
 
 ## Lisans
