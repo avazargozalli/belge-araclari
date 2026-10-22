@@ -17,6 +17,8 @@ const TOOLS = [
     subtitle: 'PDF dosyalarını makul kaliteyle sıkıştırın veya daha küçük hale getirin.' },
   { id: 'images', icon: 'images', title: "Resimden PDF'e", tint: 'var(--blue)', accepts: 'image',
     subtitle: 'JPG, PNG, WEBP ve TIFF resimlerini tek PDF yapın.' },
+  { id: 'udf', icon: 'udf', title: "UDF'ten PDF'e", tint: 'var(--red)', accepts: 'udf',
+    subtitle: "UYAP UDF belgelerini biçimini koruyarak PDF'e çevirin, isterseniz tek PDF'te birleştirin." },
   { id: 'merge', icon: 'merge', title: 'PDF Birleştir', tint: 'var(--purple)', accepts: 'pdf',
     subtitle: "Birden fazla PDF'i istediğiniz sırayla tek dosyada birleştirin." },
   { id: 'split', icon: 'split', title: 'PDF Böl', tint: 'var(--orange)', accepts: 'pdf', single: true,
@@ -51,6 +53,7 @@ const state = {
   tools: {
     compress: { files: [], level: 'balanced', scan: false, job: newJob() },
     images: { files: [], options: { pageSize: 'a4', orientation: 'auto', margin: 'none', quality: 'balanced' }, name: '', job: newJob() },
+    udf: { files: [], merge: true, name: '', job: newJob() },
     merge: { files: [], name: 'Birleştirilmiş belge', job: newJob() },
     split: { files: [], mode: 'each', ranges: '', separate: false, every: 2, job: newJob() },
     organize: { file: null, doc: null, pages: [], selected: new Set(), original: 0, error: null, job: newJob() },
@@ -82,11 +85,12 @@ const totalPages = (files) => files.reduce((s, f) => s + (f.pages || 0), 0);
 const baseName = (path) => (path.split(/[\\/]/).pop() || '').replace(/\.[^.]+$/, '');
 
 async function pickFiles(kind, multiple) {
-  const filters = kind === 'pdf'
-    ? [{ name: 'PDF', extensions: ['pdf'] }]
-    : kind === 'image'
-      ? [{ name: 'Resimler', extensions: ['jpg', 'jpeg', 'png', 'webp', 'tif', 'tiff', 'gif', 'bmp'] }]
-      : [{ name: 'PDF ve resimler', extensions: ['pdf', 'jpg', 'jpeg', 'png', 'webp', 'tif', 'tiff', 'gif', 'bmp'] }];
+  const images = ['jpg', 'jpeg', 'png', 'webp', 'tif', 'tiff', 'gif', 'bmp'];
+  const filters = {
+    pdf: [{ name: 'PDF', extensions: ['pdf'] }],
+    image: [{ name: 'Resimler', extensions: images }],
+    udf: [{ name: 'UYAP UDF', extensions: ['udf'] }],
+  }[kind] || [{ name: 'PDF, UDF ve resimler', extensions: ['pdf', 'udf', ...images] }];
   const picked = await tauri()?.dialog.open({ multiple, filters });
   if (!picked) return [];
   return Array.isArray(picked) ? picked : [picked];
@@ -118,12 +122,18 @@ async function routeFiles(paths) {
   const infos = await describe(paths);
   const pdfs = infos.filter((f) => f.kind === 'pdf').map((f) => f.path);
   const images = infos.filter((f) => f.kind === 'image').map((f) => f.path);
+  const udfs = infos.filter((f) => f.kind === 'udf').map((f) => f.path);
+  if (udfs.length) {
+    state.view = 'udf';
+    await addFiles('udf', udfs);
+    if (!pdfs.length && !images.length) return;
+  }
   if (!pdfs.length) {
     if (!images.length) return;
     state.view = 'images';
     return addFiles('images', images);
   }
-  const target = state.view !== 'home' && state.view !== 'images' ? state.view : 'compress';
+  const target = !['home', 'images', 'udf'].includes(state.view) ? state.view : 'compress';
   state.view = target;
   return addFiles(target, pdfs);
 }
@@ -179,6 +189,11 @@ const actions = {
       }
       return results;
     });
+  },
+
+  udf() {
+    const t = state.tools.udf;
+    runJob('udf', (job) => invoke('udf_to_pdf', { job: job.id, paths: t.files.map((f) => f.path), merge: t.merge, name: t.name, outDir: outDir() }));
   },
 
   images() {
@@ -324,7 +339,7 @@ function renderHome() {
         <h1>Belge araçları</h1>
         <p>PDF dosyalarını küçültün, resimleri PDF'e çevirin, birleştirin ve düzenleyin. Tüm işlemler bu bilgisayarda yapılır; orijinal dosyalarınız asla değiştirilmez.</p>
       </div>
-      ${dropzone({ title: 'Dosyaları buraya bırakın', text: "PDF'ler küçültmeye, resimler PDF'e dönüştürmeye gider\nveya seçmek için tıklayın", kind: 'any' })}
+      ${dropzone({ title: 'Dosyaları buraya bırakın', text: "PDF'ler küçültmeye, resimler ve UDF'ler PDF'e dönüştürmeye gider\nveya seçmek için tıklayın", kind: 'any' })}
       <p class="eyebrow">Tüm araçlar</p>
       <div class="tool-grid">
         ${TOOLS.map((t) => `
@@ -363,7 +378,7 @@ function fileList(toolId, { title = 'Dosyalar', sortable = false } = {}) {
       ${t.files.map((f, i) => `
         <div class="file-row" data-sort-item data-id="${f.id}">
           ${showIndex ? `<span class="index">${i + 1}</span>` : ''}
-          <div class="thumb" data-thumb="${esc(f.path)}" data-kind="${f.kind}">${icon(f.kind === 'pdf' ? 'file' : 'image')}</div>
+          <div class="thumb" data-thumb="${esc(f.path)}" data-kind="${f.kind}">${icon({ pdf: 'file', udf: 'udf' }[f.kind] || 'image')}</div>
           <div class="file-meta">
             <strong title="${esc(f.path)}">${esc(f.name)}</strong>
             <span>${formatBytes(f.size)}${f.kind === 'pdf' || f.pages > 1 ? ` · ${f.locked ? '?' : f.pages} sayfa` : ''}${f.locked ? ` · <span class="lock">Şifreli</span>` : ''}</span>
@@ -435,6 +450,19 @@ function toolBody(id) {
           ${warn
             ? banner('Sıkıştırmayı artırmak görüntü kalitesini düşürebilir. Sonucu kontrol etmeden orijinal dosyayı silmeyin.', 'warn')
             : banner("Makul seçenek dosyayı bozmadan küçültmeyi hedefler. Zaten optimize edilmiş PDF'lerde boyut her zaman azalmayabilir; bu durumda yeni dosya oluşturulmaz.")}
+        </div>`;
+    }
+    case 'udf': {
+      const many = t.files.length > 1;
+      return filePicker(id, { title: 'UDF dosyalarını buraya sürükleyin', text: 'UYAP belgeleri · Birden fazla seçip sırayı sürükleyerek değiştirebilirsiniz', listTitle: 'Belge sırası', sortable: true }) + `
+        <div class="card pad">
+          <p class="eyebrow">Çıktı</p>
+          <label class="toggle">
+            <span><strong>Tek PDF'te birleştir</strong><span>${t.merge ? 'Tüm UDF’ler listedeki sırayla tek bir PDF dosyası olur.' : 'Her UDF için ayrı bir PDF oluşturulur.'}</span></span>
+            <span class="switch"><input type="checkbox" data-bind="merge" ${t.merge ? 'checked' : ''} ${many ? '' : 'disabled'}><i></i></span>
+          </label>
+          ${t.merge && many ? `<div class="option-row"><label for="f-name">Dosya adı</label><span class="inline"><input id="f-name" class="field" type="text" data-bind="name" value="${esc(t.name)}" placeholder="${esc(baseName(t.files[0].path))}"><span class="muted">.pdf</span></span></div>` : ''}
+          ${banner("Yazı tipi, kalın/italik/altı çizili metin, hizalama, girintiler, sekmeler, tablolar, antetli kağıt (arka plan), üst/alt bilgi ve sayfa numaraları korunur. Metin PDF'te seçilebilir kalır.")}
         </div>`;
     }
     case 'images': {
@@ -543,13 +571,14 @@ function actionBarHtml(id) {
   const tool = toolById[id];
   const t = state.tools[id];
   const job = t.job;
-  const label = { compress: 'PDF Küçült', images: 'PDF Oluştur', merge: 'Birleştir', split: 'Böl', organize: 'Kaydet',
+  const label = { compress: 'PDF Küçült', images: 'PDF Oluştur', udf: t.merge && t.files?.length > 1 ? 'Birleştir ve PDF Yap' : "PDF'e Çevir", merge: 'Birleştir', split: 'Böl', organize: 'Kaydet',
     pdfToImages: 'Görsellere Dönüştür', protect: t.mode === 'encrypt' ? 'Şifrele' : 'Şifreyi Kaldır' }[id];
   let info = '';
   let disabled = false;
   switch (id) {
     case 'compress': info = t.files.length ? `${t.files.length} PDF · ${formatBytes(totalSize(t.files))}` : 'PDF ekleyin'; disabled = !t.files.length; break;
     case 'images': info = t.files.length ? `${totalPages(t.files)} sayfa oluşturulacak` : 'Resim ekleyin'; disabled = !t.files.length; break;
+    case 'udf': info = t.files.length ? `${t.files.length} UDF` : 'UDF ekleyin'; disabled = !t.files.length; break;
     case 'merge': info = t.files.length < 2 ? 'En az iki PDF ekleyin' : `${t.files.length} dosya · ${totalPages(t.files)} sayfa`; disabled = t.files.length < 2; break;
     case 'split': info = t.files[0] ? `${t.files[0].pages} sayfa` : 'PDF ekleyin'; disabled = !t.files.length || (t.mode === 'ranges' && !t.ranges.trim()); break;
     case 'organize': info = t.file ? `${t.pages.length} sayfa · ${t.selected.size} seçili` : 'PDF ekleyin'; disabled = !t.file || !t.pages.length || !organizeDirty(); break;
@@ -609,6 +638,7 @@ let thumbQueue = Promise.resolve();
 
 function hydrateThumbs() {
   for (const el of main.querySelectorAll('[data-thumb]')) {
+    if (el.dataset.kind === 'udf') continue;
     const path = el.dataset.thumb;
     if (thumbCache.has(path)) {
       if (thumbCache.get(path)) el.innerHTML = `<img src="${thumbCache.get(path)}" alt="">`;

@@ -9,7 +9,7 @@ cd "$ROOT"
 APP_NAME="Belge Araçları"
 EXECUTABLE="BelgeAraclari"
 BUNDLE_ID="com.azargozalli.belgearaclari"
-VERSION="1.1.1"
+VERSION="1.2.0"
 BUILD_NUMBER="1"
 DIST="$ROOT/dist"
 APP="$DIST/$APP_NAME.app"
@@ -61,6 +61,12 @@ cat > "$APP/Contents/Info.plist" <<PLIST
       <key>CFBundleTypeRole</key><string>Editor</string>
       <key>LSHandlerRank</key><string>Alternate</string>
       <key>LSItemContentTypes</key><array><string>com.adobe.pdf</string></array>
+    </dict>
+    <dict>
+      <key>CFBundleTypeName</key><string>UYAP UDF</string>
+      <key>CFBundleTypeRole</key><string>Viewer</string>
+      <key>LSHandlerRank</key><string>Alternate</string>
+      <key>CFBundleTypeExtensions</key><array><string>udf</string></array>
     </dict>
     <dict>
       <key>CFBundleTypeName</key><string>Resim</string>

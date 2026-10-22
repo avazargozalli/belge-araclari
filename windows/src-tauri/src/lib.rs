@@ -2,6 +2,7 @@
 //! No command here performs network access; files are only read from and written to disk.
 
 pub mod engine;
+mod udf_print;
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -84,6 +85,10 @@ fn is_pdf(path: &Path) -> bool {
     path.extension().map(|e| e.eq_ignore_ascii_case("pdf")).unwrap_or(false)
 }
 
+fn is_udf(path: &Path) -> bool {
+    path.extension().map(|e| e.eq_ignore_ascii_case("udf")).unwrap_or(false)
+}
+
 /// Scratch state for multi-step jobs whose pages are rendered by the UI.
 #[derive(Default)]
 struct Sessions {
@@ -92,7 +97,7 @@ struct Sessions {
     allowed_reads: Mutex<HashSet<PathBuf>>,
 }
 
-fn token() -> String {
+pub(crate) fn token() -> String {
     let mut bytes = [0u8; 12];
     let _ = getrandom::fill(&mut bytes);
     bytes.iter().map(|b| format!("{b:02x}")).collect()
@@ -118,7 +123,7 @@ async fn file_info(paths: Vec<String>, sessions: State<'_, Sessions>) -> CmdResu
                 vec![p]
             }
         })
-        .filter(|p| is_pdf(p) || images::is_supported(p))
+        .filter(|p| is_pdf(p) || is_udf(p) || images::is_supported(p))
         .collect();
     {
         let mut allowed = sessions.allowed_reads.lock().unwrap();
@@ -129,8 +134,15 @@ async fn file_info(paths: Vec<String>, sessions: State<'_, Sessions>) -> CmdResu
             .into_iter()
             .map(|p| {
                 let pdf = is_pdf(&p);
-                let (pages, locked) = if pdf { ops::page_count(&p).unwrap_or((0, false)) } else { (tiff_pages(&p), false) };
-                FileInfo { name: file_name(&p), size: file_size(&p), pages, locked, kind: if pdf { "pdf" } else { "image" }, path: p.display().to_string() }
+                let (pages, locked, kind) = if pdf {
+                    let (pages, locked) = ops::page_count(&p).unwrap_or((0, false));
+                    (pages, locked, "pdf")
+                } else if is_udf(&p) {
+                    (0, false, "udf")
+                } else {
+                    (tiff_pages(&p), false, "image")
+                };
+                FileInfo { name: file_name(&p), size: file_size(&p), pages, locked, kind, path: p.display().to_string() }
             })
             .collect()
     })
@@ -186,6 +198,9 @@ fn ghostscript() -> Option<String> {
 
 #[tauri::command]
 fn initial_files() -> Vec<String> {
+    if cli_udf_request().is_some() {
+        return vec![];
+    }
     std::env::args().skip(1).filter(|a| !a.starts_with('-') && Path::new(a).exists()).collect()
 }
 
@@ -373,6 +388,38 @@ fn export_finish(token: String, sessions: State<'_, Sessions>) {
     sessions.exports.lock().unwrap().remove(&token);
 }
 
+// MARK: - UDF → PDF
+
+#[tauri::command]
+async fn udf_to_pdf(app: AppHandle, job: String, paths: Vec<String>, merge: bool, name: String, out_dir: Option<String>) -> CmdResult<Vec<ResultItem>> {
+    let inputs: Vec<PathBuf> = paths.iter().map(PathBuf::from).collect();
+    let first = inputs.first().ok_or("UDF yok")?.clone();
+    let merge = merge && inputs.len() > 1;
+    let chosen = chosen_dir(&out_dir);
+    let base = if name.trim().is_empty() { base_name(&first) } else { name.trim().to_string() };
+    let merged = unique_file(&directory_for(&first, chosen.as_deref()), &base, "pdf");
+    let progress = reporter(&app, &job);
+    let results = udf_print::convert_many(&app, &inputs, merge, &merged, |p| directory_for(p, chosen.as_deref()), &progress).await;
+    Ok(results
+        .into_iter()
+        .map(|r| match r {
+            Ok((path, pages)) => {
+                let detail = if merge && path == merged { format!("{} UDF · {pages} sayfa · {}", inputs.len(), human_size(file_size(&path))) } else { format!("{pages} sayfa · {}", human_size(file_size(&path))) };
+                ResultItem::ok(&path, detail)
+            }
+            Err((title, detail)) => ResultItem::failed(title, detail),
+        })
+        .collect())
+}
+
+/// `BelgeAraclari.exe --udf-to-pdf input.udf output.pdf` converts without showing a window
+/// (used for batch work and by the Windows CI test).
+fn cli_udf_request() -> Option<(PathBuf, PathBuf)> {
+    let args: Vec<String> = std::env::args().collect();
+    let i = args.iter().position(|a| a == "--udf-to-pdf")?;
+    Some((PathBuf::from(args.get(i + 1)?), PathBuf::from(args.get(i + 2)?)))
+}
+
 // MARK: - Passwords
 
 #[tauri::command]
@@ -406,15 +453,40 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .manage(Sessions::default())
+        .manage(udf_print::PrintPages::default())
+        .register_asynchronous_uri_scheme_protocol(udf_print::SCHEME, |ctx, request, responder| {
+            let html = udf_print::serve(ctx.app_handle(), request.uri().path());
+            let response = match html {
+                Some(html) => tauri::http::Response::builder().header("Content-Type", "text/html; charset=utf-8").body(html.into_bytes()),
+                None => tauri::http::Response::builder().status(404).body(Vec::new()),
+            };
+            responder.respond(response.unwrap_or_default());
+        })
         .invoke_handler(tauri::generate_handler![
             file_info, read_pdf, thumbnail, open_path, reveal_path, ghostscript, initial_files,
             compress, scan_begin, scan_page, scan_finish, scan_dpi,
-            images_to_pdf, merge, split, organize,
+            images_to_pdf, udf_to_pdf, merge, split, organize,
             export_begin, export_page, export_finish, protect
         ])
         .setup(|app| {
-            if let Some(window) = app.get_webview_window("main") {
+            if let Some((input, output)) = cli_udf_request() {
+                let handle = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    let code = match udf_print::convert(&handle, &input, &output).await {
+                        Ok(pages) => {
+                            println!("{pages} sayfa → {}", output.display());
+                            0
+                        }
+                        Err(e) => {
+                            eprintln!("{e}");
+                            1
+                        }
+                    };
+                    handle.exit(code);
+                });
+            } else if let Some(window) = app.get_webview_window("main") {
                 let _ = window.set_title("Belge Araçları");
+                let _ = window.show();
             }
             Ok(())
         })

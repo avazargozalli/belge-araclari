@@ -39,6 +39,7 @@ struct ContentView: View {
         switch state.selection {
         case .tool(.compress): CompressView(model: state.compress)
         case .tool(.imagesToPDF): ImagesView(model: state.images)
+        case .tool(.udfToPDF): UDFView(model: state.udf)
         case .tool(.merge): MergeView(model: state.merge)
         case .tool(.split): SplitView(model: state.split)
         case .tool(.organize): OrganizeView(model: state.organize)
@@ -68,8 +69,8 @@ struct HomeView: View {
                 }
 
                 DropZone(title: "Dosyaları buraya bırakın",
-                         subtitle: "PDF'ler küçültmeye, resimler PDF'e dönüştürmeye gider\nveya seçmek için tıklayın",
-                         types: FileTypes.pdf + FileTypes.images, tint: Tool.compress.tint) { urls in
+                         subtitle: "PDF'ler küçültmeye, resimler ve UDF'ler PDF'e dönüştürmeye gider\nveya seçmek için tıklayın",
+                         types: FileTypes.pdf + FileTypes.images + FileTypes.udf, tint: Tool.compress.tint) { urls in
                     state.open(urls)
                 }
 

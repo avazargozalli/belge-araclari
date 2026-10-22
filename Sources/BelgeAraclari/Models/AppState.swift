@@ -4,13 +4,14 @@ import PDFKit
 import ImageIO
 
 enum Tool: String, CaseIterable, Identifiable, Hashable {
-    case compress, imagesToPDF, merge, split, organize, pdfToImages, protect
+    case compress, imagesToPDF, udfToPDF, merge, split, organize, pdfToImages, protect
     var id: String { rawValue }
 
     var title: String {
         switch self {
         case .compress: return "PDF Küçült"
         case .imagesToPDF: return "Resimden PDF'e"
+        case .udfToPDF: return "UDF'ten PDF'e"
         case .merge: return "PDF Birleştir"
         case .split: return "PDF Böl"
         case .organize: return "Sayfaları Düzenle"
@@ -23,6 +24,7 @@ enum Tool: String, CaseIterable, Identifiable, Hashable {
         switch self {
         case .compress: return "PDF dosyalarını makul kaliteyle sıkıştırın veya daha küçük hale getirin."
         case .imagesToPDF: return "JPG, PNG, WEBP, HEIC ve TIFF resimlerini tek PDF yapın."
+        case .udfToPDF: return "UYAP UDF belgelerini biçimini koruyarak PDF'e çevirin, isterseniz tek PDF'te birleştirin."
         case .merge: return "Birden fazla PDF'i istediğiniz sırayla tek dosyada birleştirin."
         case .split: return "Her sayfayı ayrı dosya yapın veya belirli sayfaları çıkarın."
         case .organize: return "Sayfaları döndürün, silin ve sürükleyerek yeniden sıralayın."
@@ -35,6 +37,7 @@ enum Tool: String, CaseIterable, Identifiable, Hashable {
         switch self {
         case .compress: return "arrow.down.right.and.arrow.up.left"
         case .imagesToPDF: return "photo.on.rectangle.angled"
+        case .udfToPDF: return "doc.text"
         case .merge: return "doc.on.doc"
         case .split: return "scissors"
         case .organize: return "square.grid.2x2"
@@ -47,6 +50,7 @@ enum Tool: String, CaseIterable, Identifiable, Hashable {
         switch self {
         case .compress: return Color(red: 0.06, green: 0.62, blue: 0.47)
         case .imagesToPDF: return Color(red: 0.15, green: 0.45, blue: 0.95)
+        case .udfToPDF: return Color(red: 0.78, green: 0.2, blue: 0.24)
         case .merge: return Color(red: 0.49, green: 0.33, blue: 0.93)
         case .split: return Color(red: 0.95, green: 0.51, blue: 0.13)
         case .organize: return Color(red: 0.05, green: 0.6, blue: 0.75)
@@ -78,6 +82,7 @@ final class AppState {
 
     let compress = CompressModel()
     let images = ImagesModel()
+    let udf = UDFModel()
     let merge = MergeModel()
     let split = SplitModel()
     let organize = OrganizeModel()
@@ -87,17 +92,22 @@ final class AppState {
     /// Routes files opened from Finder / Dock / the home drop zone to the right tool.
     func open(_ urls: [URL]) {
         let files = FileTypes.expand(urls)
+        let udfs = files.filter(FileTypes.isUDF)
+        if !udfs.isEmpty {
+            udf.store.add(udfs)
+            selection = .tool(.udfToPDF)
+        }
         let pdfs = files.filter(FileTypes.isPDF)
         let images = files.filter(FileTypes.isImage)
 
         if pdfs.isEmpty {
-            guard !images.isEmpty else { return }
+            guard !images.isEmpty, udfs.isEmpty else { return }
             self.images.store.add(images)
             selection = .tool(.imagesToPDF)
             return
         }
 
-        if case .tool(let tool) = selection, tool != .imagesToPDF {
+        if case .tool(let tool) = selection, tool != .imagesToPDF, tool != .udfToPDF {
             add(pdfs, to: tool)
         } else {
             add(pdfs, to: .compress)
@@ -112,7 +122,7 @@ final class AppState {
         case .organize: organize.load(pdfs.first)
         case .pdfToImages: pdfToImages.store.add(pdfs)
         case .protect: protect.store.add(pdfs)
-        case .imagesToPDF: break
+        case .imagesToPDF, .udfToPDF: break
         }
         selection = .tool(tool)
     }
@@ -132,7 +142,9 @@ struct FileItem: Identifiable, Hashable {
     static func make(_ url: URL) -> FileItem {
         var pages = 1
         var encrypted = false
-        if FileTypes.isPDF(url) {
+        if FileTypes.isUDF(url) {
+            pages = 0
+        } else if FileTypes.isPDF(url) {
             if let doc = CGPDFDocument(url as CFURL) {
                 pages = doc.numberOfPages
                 encrypted = doc.isEncrypted
@@ -150,7 +162,7 @@ struct FileItem: Identifiable, Hashable {
 @MainActor
 @Observable
 final class FileStore {
-    enum Kind { case pdf, image }
+    enum Kind { case pdf, image, udf }
 
     let kind: Kind
     let single: Bool
@@ -165,7 +177,13 @@ final class FileStore {
     var totalPages: Int { files.reduce(0) { $0 + $1.pageCount } }
 
     func add(_ urls: [URL]) {
-        let accepted = FileTypes.expand(urls).filter { kind == .pdf ? FileTypes.isPDF($0) : FileTypes.isImage($0) }
+        let accepted = FileTypes.expand(urls).filter { url in
+            switch kind {
+            case .pdf: return FileTypes.isPDF(url)
+            case .image: return FileTypes.isImage(url)
+            case .udf: return FileTypes.isUDF(url)
+            }
+        }
         let known = Set(files.map(\.url))
         let fresh = accepted.filter { !known.contains($0) }.map(FileItem.make)
         if single {

@@ -388,3 +388,96 @@ fn real_tiff_to_pdf() {
         std::fs::copy(&out, Path::new(&keep).join("tiff-fixed.pdf")).unwrap();
     }
 }
+
+/// Renders a real UDF through headless Chrome (same engine as WebView2) on a dev machine:
+/// `BELGE_UDF=file.udf BELGE_OUT=dir CHROME=/path/to/chrome cargo test -- --ignored udf_via_chrome`
+#[test]
+#[ignore]
+fn udf_via_chrome() {
+    let (Some(input), Some(out), Some(chrome)) = (std::env::var_os("BELGE_UDF"), std::env::var_os("BELGE_OUT"), std::env::var_os("CHROME")) else { return };
+    let out = PathBuf::from(out);
+    let doc = super::udf::parse_file(Path::new(&input)).unwrap();
+    let print = |html: String, name: &str| -> PathBuf {
+        let html_path = out.join(format!("{name}.html"));
+        std::fs::write(&html_path, html).unwrap();
+        let pdf = out.join(format!("{name}.pdf"));
+        let status = std::process::Command::new(&chrome)
+            .args(["--headless=new", "--disable-gpu", "--no-pdf-header-footer"])
+            .arg(format!("--print-to-pdf={}", pdf.display()))
+            .arg(format!("file://{}", html_path.display()))
+            .output()
+            .unwrap();
+        assert!(status.status.success());
+        pdf
+    };
+    let body_pdf = print(super::udf::body_html(&doc), "body");
+    let mut body = Document::load(&body_pdf).unwrap();
+    let pages = body.get_pages().len();
+    let deco = Document::load(print(super::udf::decoration_html(&doc, pages), "deco")).unwrap();
+    println!("body pages {pages}, decoration pages {}", deco.get_pages().len());
+    super::udf::underlay(&mut body, deco).unwrap();
+    body.save(out.join("final.pdf")).unwrap();
+}
+
+fn udf_fixture() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../tests/fixtures/ornek-dilekce.udf")
+}
+
+#[test]
+fn udf_parses_page_letterhead_and_structure() {
+    let doc = super::udf::parse_file(&udf_fixture()).unwrap();
+    assert!((doc.page_width - 595.28).abs() < 0.1 && (doc.page_height - 841.89).abs() < 0.1);
+    assert_eq!(doc.margins, [42.5; 4]);
+    let body = super::udf::body_html(&doc);
+    assert!(body.contains("ÖRNEK ASLİYE HUKUK MAHKEMESİNE"), "Turkish text decoded from UTF-16 offsets");
+    assert!(body.contains("font-weight:700") && body.contains("text-decoration:underline"));
+    assert!(body.contains("data-tabs=\"90.00\""), "TabSet becomes a tab stop");
+    assert!(body.contains("padding-left:96.00pt"), "Hanging indent for wrapped lines");
+    assert!(body.contains("<span>1.</span>") && body.contains("<span>3.</span>"), "numbered list labels");
+    assert!(body.contains("<table") && body.contains("border:0.5pt solid #000"));
+    assert!(body.contains("color:#c00000"), "Java ARGB colour");
+    assert!(body.contains("text-align:justify") && body.contains("line-height:1.3225"));
+    assert!(body.contains("location.hash='ready='"));
+
+    let deco = super::udf::decoration_html(&doc, 3);
+    assert_eq!(deco.matches("<div class=\"pg\">").count(), 3);
+    assert!(deco.contains("Sayfa 1/3") && deco.contains("Sayfa 3/3"), "page numbers with total");
+    assert!(deco.contains("text-align:right"));
+    assert_eq!(deco.matches("class=\"bg\"").count(), 3, "letterhead on every page");
+}
+
+#[test]
+fn udf_rejects_non_udf_files() {
+    let dir = TempDir::new("notudf");
+    let fake = dir.path("sahte.udf");
+    std::fs::write(&fake, b"not a zip").unwrap();
+    assert!(super::udf::parse_file(&fake).is_err());
+}
+
+#[test]
+fn udf_ready_margins_from_url_fragment() {
+    assert_eq!(super::udf::ready_margins("ready=117.250,90.000"), Some((117.25, 90.0)));
+    assert_eq!(super::udf::ready_margins("#ready=1"), None);
+}
+
+#[test]
+fn underlay_puts_decoration_behind_each_page() {
+    let dir = TempDir::new("underlay");
+    let body_path = dir.path("body.pdf");
+    heavy_pdf(&body_path, 2);
+    let mut body = Document::load(&body_path).unwrap();
+    let deco_page = images::JpegPage { jpeg: tiny_jpeg(), width: 8, height: 8, gray: false, page: (595.0, 842.0), rect: (0.0, 0.0, 595.0, 842.0) };
+    let deco = images::image_pdf(&[deco_page, images::JpegPage { jpeg: tiny_jpeg(), width: 8, height: 8, gray: false, page: (595.0, 842.0), rect: (0.0, 0.0, 595.0, 842.0) }], "antet").unwrap();
+    super::udf::underlay(&mut body, deco).unwrap();
+    let out = dir.path("final.pdf");
+    ops::save(&mut body, &out).unwrap();
+
+    let doc = Document::load(&out).unwrap();
+    assert_eq!(doc.get_pages().len(), 2);
+    for (_, id) in doc.get_pages() {
+        let content = String::from_utf8_lossy(&doc.get_page_content(id).unwrap()).to_string();
+        assert!(content.starts_with("q /BelgeAntet Do Q"), "decoration drawn first (underneath)");
+        assert!(content.contains("Sayfa"), "original text kept");
+    }
+    assert!(page_text(&out, 2).contains("Sayfa 2"));
+}

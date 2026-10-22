@@ -1,6 +1,6 @@
 [package]
 name = "belge-araclari"
-version = "1.1.1"
+version = "1.2.0"
 description = "Belge Araçları — çevrimdışı PDF araçları"
 authors = ["Azar Gozalli"]
 license = "MIT"
@@ -24,8 +24,16 @@ lopdf = "0.42"
 rayon = "1"
 getrandom = "0.3"
 tiff = "0.11"
+roxmltree = "0.20"
+zip = { version = "2", default-features = false, features = ["deflate"] }
+base64 = "0.22"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp", "tiff", "gif", "bmp"] }
 thiserror = "2"
+
+[target.'cfg(windows)'.dependencies]
+# Same versions as Tauri's WebView2 binding, needed for ICoreWebView2_7::PrintToPdf.
+webview2-com = "0.39.1"
+windows = "0.62.2"
 
 [profile.release]
 opt-level = 3

@@ -111,6 +111,52 @@ struct ImagesView: View {
     }
 }
 
+// MARK: - UDF → PDF
+
+struct UDFView: View {
+    @Bindable var model: UDFModel
+    private let tool = Tool.udfToPDF
+
+    var body: some View {
+        ToolPage(tool: tool) {
+            FilePicker(store: model.store, tool: tool, title: "UDF dosyalarını buraya sürükleyin",
+                       subtitle: "UYAP belgeleri · Birden fazla seçip sırayı sürükleyerek değiştirebilirsiniz",
+                       listTitle: "Belge sırası", reorderable: true)
+
+            VStack(alignment: .leading, spacing: 16) {
+                SectionTitle(text: "Çıktı")
+                Toggle(isOn: $model.merge) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Tek PDF'te birleştir").fontWeight(.medium)
+                        Text(model.merge ? "Tüm UDF'ler listedeki sırayla tek bir PDF dosyası olur." : "Her UDF için ayrı bir PDF oluşturulur.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+                .toggleStyle(.switch)
+                .tint(tool.tint)
+                .disabled(model.store.files.count < 2)
+
+                if model.merge && model.store.files.count > 1 {
+                    OptionRow(label: "Dosya adı") {
+                        TextField(model.store.files.first.map { Output.baseName($0.url) } ?? "Belge", text: $model.outputName)
+                            .textFieldStyle(.roundedBorder).frame(maxWidth: 300)
+                        Text(".pdf").foregroundStyle(.secondary)
+                    }
+                }
+                Banner(text: "Yazı tipi, kalın/italik/altı çizili metin, hizalama, girintiler, sekmeler, tablolar, antetli kağıt (arka plan), üst/alt bilgi ve sayfa numaraları korunur. Metin PDF'te seçilebilir kalır.")
+            }
+            .card()
+
+            ResultsView(job: model.job, tint: tool.tint)
+        } bar: {
+            ActionBar(job: model.job, tool: tool, title: model.merge && model.store.files.count > 1 ? "Birleştir ve PDF Yap" : "PDF'e Çevir",
+                      info: model.store.files.isEmpty ? "UDF ekleyin" : "\(model.store.files.count) UDF",
+                      disabled: model.store.files.isEmpty, action: model.start)
+        }
+        .animation(.snappy, value: model.store.files.count)
+    }
+}
+
 // MARK: - Merge
 
 struct MergeView: View {
@@ -297,7 +343,13 @@ struct FilePicker: View {
     var listTitle = "Dosyalar"
     var reorderable = false
 
-    private var types: [UTType] { store.kind == .pdf ? FileTypes.pdf : FileTypes.images }
+    private var types: [UTType] {
+        switch store.kind {
+        case .pdf: return FileTypes.pdf
+        case .image: return FileTypes.images
+        case .udf: return FileTypes.udf
+        }
+    }
 
     var body: some View {
         if store.files.isEmpty {

@@ -33,10 +33,12 @@ enum AppError: LocalizedError {
 enum FileTypes {
     static let pdf: [UTType] = [.pdf]
     static let images: [UTType] = [.jpeg, .png, .webP, .heic, .heif, .tiff, .gif, .bmp]
+    static let udf: [UTType] = [UTType(filenameExtension: "udf") ?? .data]
     static let imageExtensions: Set<String> = ["jpg", "jpeg", "png", "webp", "heic", "heif", "tif", "tiff", "gif", "bmp"]
 
     static func isPDF(_ url: URL) -> Bool { url.pathExtension.lowercased() == "pdf" }
     static func isImage(_ url: URL) -> Bool { imageExtensions.contains(url.pathExtension.lowercased()) }
+    static func isUDF(_ url: URL) -> Bool { url.pathExtension.lowercased() == "udf" }
 
     /// Replaces dropped folders with the files they contain (one level, name-sorted).
     static func expand(_ urls: [URL]) -> [URL] {

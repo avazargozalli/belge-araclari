@@ -89,6 +89,47 @@ jobs:
             if (-not $app.HasExited) { Stop-Process -Id $app.Id -Force }
           }
 
+      - name: Convert sample UDF with the installed app (WebView2 print)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $destination = Join-Path $env:RUNNER_TEMP 'belge-araclari'
+          $exe = Get-ChildItem "$destination/*.exe" | Where-Object { $_.Name -notmatch 'uninstall' } | Select-Object -First 1
+          $udf = (Resolve-Path 'tests/fixtures/ornek-dilekce.udf').Path
+          $out = Join-Path $env:RUNNER_TEMP 'udf-check/ornek-dilekce.pdf'
+          New-Item -ItemType Directory -Force (Split-Path $out) | Out-Null
+          $process = Start-Process -FilePath $exe.FullName -ArgumentList @('--udf-to-pdf', "`"$udf`"", "`"$out`"") -PassThru
+          if (-not $process.WaitForExit(180000)) { Stop-Process -Id $process.Id -Force; throw 'UDF conversion timed out' }
+          if ($process.ExitCode -ne 0) { throw "UDF conversion failed with exit code $($process.ExitCode)" }
+          if (-not (Test-Path $out)) { throw 'UDF conversion produced no PDF' }
+          Write-Output "UDF → PDF: $((Get-Item $out).Length) bytes"
+
+      - name: Check converted UDF content
+        run: |
+          python -m pip install --quiet pypdf==5.1.0
+          python - "$RUNNER_TEMP/udf-check/ornek-dilekce.pdf" <<'EOF'
+          import sys
+          from pypdf import PdfReader
+          reader = PdfReader(sys.argv[1])
+          pages = len(reader.pages)
+          text = "\n".join(page.extract_text() or "" for page in reader.pages)
+          print("pages:", pages)
+          print(text[:400])
+          assert pages == 2, f"expected 2 pages, got {pages}"
+          assert "MAHKEMES" in text, "body text missing"
+          assert "Tablo hücresi metni" in text, "table text missing"
+          for page in reader.pages:
+              xobjects = page["/Resources"]["/XObject"]
+              assert "/BelgeAntet" in xobjects, "letterhead layer missing"
+          print("UDF conversion content: passed")
+          EOF
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: udf-sample-output
+          retention-days: 7
+          path: ${{ runner.temp }}/udf-check/*.pdf
+
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: belge-araclari-windows

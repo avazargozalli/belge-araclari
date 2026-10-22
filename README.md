@@ -34,6 +34,7 @@
 | Araç | Ne yapar |
 |---|---|
 | **PDF Küçült** | Makul / Daha Küçük / En Küçük seviyeleri. Metin seçilebilir kalır. Taranmış belgeler için ayrıca "taranmış belge modu". Birden fazla dosyayı tek seferde işler. |
+| **UDF'ten PDF'e** | UYAP belgelerini (.udf) biçimini koruyarak PDF'e çevirir. Birden fazla UDF'yi sürükleyerek sıralayıp tek PDF'te birleştirebilirsiniz. Yazı tipi, kalın/italik/altı çizili, hizalama, girintiler, sekmeler, numaralı listeler, tablolar, resimler, antetli kağıt (arka plan), üst/alt bilgi ve sayfa numaraları korunur; metin seçilebilir kalır. |
 | **Resimden PDF'e** | JPG, PNG, WEBP, HEIC, TIFF (çok sayfalı), GIF, BMP → tek PDF. Sayfa boyutu (A4, A5, Letter, Legal, resme göre), yönlendirme, kenar boşluğu ve kalite ayarı. Sürükleyerek sıralama. |
 | **PDF Birleştir** | Birden fazla PDF'i istediğiniz sırayla tek dosyada birleştirir. |
 | **PDF Böl** | Her sayfayı ayrı dosya yapar, `1-3, 5, 8-` gibi sayfaları çıkarır veya her N sayfada böler. |
@@ -48,6 +49,15 @@
 - Finder'da PDF veya resimleri Dock simgesinin üzerine bırakabilir veya "Birlikte Aç" menüsünden kullanabilirsiniz.
 - Açık ve koyu görünüm desteklenir. Apple Silicon ve Intel Mac'lerde çalışır (macOS 14 Sonoma ve üzeri).
 - **Windows 10 ve 11** için ayrı bir sürüm vardır (aşağıya bakın). Arayüz ve araçlar aynıdır. Tek fark: Windows sürümü HEIC fotoğrafları okumaz; önce JPG olarak kaydedin.
+
+### UDF nasıl dönüştürülür?
+
+UDF, UYAP Doküman Editörü'nün biçimidir: içinde tüm metin ve her metin parçasının yazı tipi, boyutu, hizalaması, girintileri ve sekme durakları bulunan bir XML dosyası taşıyan bir ZIP arşividir. Uygulama bu bilgileri okuyup sayfayı UYAP'ın kurallarıyla yeniden dizer:
+
+- **macOS:** Apple'ın metin motoru (TextKit) ile doğrudan PDF'e çizilir.
+- **Windows:** Belge HTML'e çevrilip yerleşik Microsoft Edge WebView2 motoruyla PDF'e yazdırılır; antet, üst/alt bilgi ve sayfa numaraları her sayfanın altına ayrı bir katman olarak yerleştirilir.
+
+Satır kırılımları iki platformda ve UYAP'ta yazı tipi ölçümü farkından dolayı birkaç kelime kayabilir; içerik ve biçim aynı kalır.
 
 ### PDF küçültme nasıl çalışır?
 
@@ -114,13 +124,16 @@ Sources/BelgeAraclari/
     ImageToPDF.swift         Resimden PDF
     PDFEngine.swift          Birleştir, böl, render, şifrele
     Support.swift            Dosya, çıktı ve görsel yardımcıları
+    UDF.swift                UDF okuma ve TextKit ile PDF'e dizme
   Models/                    Uygulama durumu ve araç modelleri
   Views/                     SwiftUI arayüzü
 Scripts/
   build.sh                   .app + .dmg paketleme
   make_icon.swift            Uygulama ikonunu çizer
 windows/                     Windows sürümü (Tauri 2)
-  src-tauri/src/engine/      PDF motoru (Rust, lopdf): küçült, resimden PDF, birleştir, böl, şifrele
+  src-tauri/src/engine/      PDF motoru (Rust, lopdf): küçült, resimden PDF, UDF, birleştir, böl, şifrele
+  src-tauri/src/udf_print.rs UDF'yi WebView2 ile PDF'e yazdırma
+  tests/fixtures/            Örnek (gerçek veri içermeyen) UDF test dosyası
   src-tauri/src/lib.rs       Arayüz ile motor arasındaki komutlar
   ui/                        Arayüz (HTML/CSS/JS); sayfa görüntüleme için yerel pdf.js
 .github/workflows/windows.yml  Windows derleme, test ve kurulum dosyası

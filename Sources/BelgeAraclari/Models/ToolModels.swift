@@ -66,6 +66,24 @@ final class ImagesModel {
 
 @MainActor
 @Observable
+final class UDFModel {
+    let store = FileStore(kind: .udf)
+    let job = Job()
+    var merge = true
+    var outputName = ""
+
+    func start() {
+        let urls = store.files.map(\.url)
+        let merge = merge && urls.count > 1
+        let name = outputName
+        job.run { progress in
+            try UDFRenderer.convert(urls, merge: merge, mergedName: name, progress: progress)
+        }
+    }
+}
+
+@MainActor
+@Observable
 final class MergeModel {
     let store = FileStore(kind: .pdf)
     let job = Job()

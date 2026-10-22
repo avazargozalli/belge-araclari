@@ -5,6 +5,7 @@ pub mod compress;
 pub mod images;
 pub mod ops;
 pub mod output;
+pub mod udf;
 
 #[cfg(test)]
 mod tests;

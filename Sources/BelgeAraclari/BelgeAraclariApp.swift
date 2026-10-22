@@ -42,7 +42,7 @@ struct BelgeAraclariApp: App {
 
     private func openPanel() {
         let panel = NSOpenPanel()
-        panel.allowedContentTypes = FileTypes.pdf + FileTypes.images
+        panel.allowedContentTypes = FileTypes.pdf + FileTypes.images + FileTypes.udf
         panel.allowsMultipleSelection = true
         if panel.runModal() == .OK { state.open(panel.urls) }
     }
