@@ -74,7 +74,7 @@ Windows sürümünde yerleşik motor Rust ile yazılmıştır: PDF içindeki gö
 
 ### Windows
 
-1. [Releases](../../releases) sayfasından `Belge Araçları_x.y.z_x64-setup.exe` dosyasını indirin.
+1. [Releases](../../releases) sayfasından `Belge.Araclari_x.y.z_x64-setup.exe` dosyasını indirin.
 2. Kurulum dosyasını çalıştırın. Yönetici izni gerekmez; uygulama yalnızca sizin kullanıcı hesabınıza kurulur.
 3. Kurulum dosyası dijital olarak imzalanmadığı için Windows SmartScreen "Windows bilgisayarınızı korudu" uyarısı gösterebilir. **Ek bilgi → Yine de çalıştır** ile devam edin.
 
