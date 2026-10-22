@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 
 use image::codecs::jpeg::JpegEncoder;
 use image::imageops::FilterType;
-use image::{DynamicImage, GrayImage, ImageDecoder, ImageReader, RgbImage, RgbaImage};
+use image::{DynamicImage, ExtendedColorType, GrayImage, ImageDecoder, ImageEncoder, ImageReader, RgbImage, RgbaImage};
 use lopdf::{dictionary, Document, Object, ObjectId, Stream};
 use rayon::prelude::*;
 use serde::Deserialize;
@@ -200,11 +200,17 @@ pub fn encode_jpeg(image: DynamicImage, quality: u8, max_pixel: Option<u32>) -> 
         DynamicImage::ImageRgb8(image.to_rgb8())
     };
     let (width, height) = (flat.width(), flat.height());
+    // Encode the raw buffer with an explicit colour type. `encode_image(&DynamicImage)` would always
+    // write 3 components (DynamicImage's pixel type is RGBA), which contradicts /DeviceGray in the PDF.
+    let (pixels, color) = match flat {
+        DynamicImage::ImageLuma8(img) => (img.into_raw(), ExtendedColorType::L8),
+        other => (other.to_rgb8().into_raw(), ExtendedColorType::Rgb8),
+    };
     let mut jpeg = Vec::new();
     JpegEncoder::new_with_quality(Cursor::new(&mut jpeg), quality)
-        .encode_image(&flat)
+        .write_image(&pixels, width, height, color)
         .map_err(|e| EngineError::Message(format!("Resim kodlanamadı: {e}")))?;
-    Ok((jpeg, width, height, gray))
+    Ok((jpeg, width, height, color == ExtendedColorType::L8))
 }
 
 pub fn layout(image: (f32, f32), options: &ImageOptions) -> ((f32, f32), (f32, f32, f32, f32)) {

@@ -287,3 +287,104 @@ fn real_files_from_fixture_folder() {
         }
     }
 }
+
+/// Number of colour components declared in a JPEG's frame header.
+fn jpeg_components(jpeg: &[u8]) -> u8 {
+    let mut i = 2;
+    while i + 9 < jpeg.len() {
+        if jpeg[i] == 0xFF && matches!(jpeg[i + 1], 0xC0 | 0xC1 | 0xC2) {
+            return jpeg[i + 9];
+        }
+        if jpeg[i] == 0xFF && jpeg[i + 1] != 0xFF && jpeg[i + 1] != 0x00 {
+            i += 2 + u16::from_be_bytes([jpeg[i + 2], jpeg[i + 3]]) as usize;
+        } else {
+            i += 1;
+        }
+    }
+    0
+}
+
+/// Every embedded JPEG must have as many components as its /ColorSpace says, or viewers garble it.
+fn assert_jpeg_colorspaces_match(path: &Path) -> usize {
+    let doc = Document::load(path).unwrap();
+    let mut checked = 0;
+    for object in doc.objects.values() {
+        let Ok(stream) = object.as_stream() else { continue };
+        if stream.dict.get(b"Filter").and_then(Object::as_name).ok() != Some(b"DCTDecode") {
+            continue;
+        }
+        let space = stream.dict.get(b"ColorSpace").and_then(Object::as_name).unwrap_or(b"DeviceRGB");
+        let expected = if space == b"DeviceGray" { 1 } else { 3 };
+        assert_eq!(jpeg_components(&stream.content), expected, "JPEG components vs {}", String::from_utf8_lossy(space));
+        checked += 1;
+    }
+    checked
+}
+
+#[test]
+fn grayscale_images_stay_one_component() {
+    let gray = DynamicImage::ImageLuma8(image::GrayImage::from_fn(300, 200, |x, _| image::Luma([(x % 256) as u8])));
+    let (jpeg, _, _, is_gray) = images::encode_jpeg(gray, 80, None).unwrap();
+    assert!(is_gray);
+    assert_eq!(jpeg_components(&jpeg), 1);
+    let rgb = DynamicImage::ImageRgb8(photo(300, 200));
+    let (jpeg, _, _, is_gray) = images::encode_jpeg(rgb, 80, None).unwrap();
+    assert!(!is_gray);
+    assert_eq!(jpeg_components(&jpeg), 3);
+}
+
+/// Black-and-white fax TIFF (1 bit, CCITT G4 style width not divisible by 8) → PDF with matching colour spaces.
+#[test]
+fn bilevel_multipage_tiff_to_pdf() {
+    let dir = TempDir::new("bilevel");
+    let tif = dir.path("faks.tif");
+    {
+        let file = std::fs::File::create(&tif).unwrap();
+        let mut encoder = tiff::encoder::TiffEncoder::new(file).unwrap();
+        for page in 0..2u32 {
+            let frame = image::GrayImage::from_fn(826, 400, |x, y| image::Luma([if (x / 7 + y / 5 + page) % 3 == 0 { 0 } else { 255 }]));
+            encoder.write_image::<tiff::encoder::colortype::Gray8>(826, 400, frame.as_raw()).unwrap();
+        }
+    }
+    let out = dir.path("faks.pdf");
+    assert_eq!(images::images_to_pdf(&[tif], &ImageOptions::default(), &out, NO_PROGRESS).unwrap(), 2);
+    assert_eq!(assert_jpeg_colorspaces_match(&out), 2);
+}
+
+#[test]
+fn compressing_grayscale_scans_keeps_valid_jpegs() {
+    let dir = TempDir::new("grayscan");
+    let input = dir.path("gri.pdf");
+    let mut doc = Document::with_version("1.7");
+    let pages_id = doc.new_object_id();
+    let mut seed = 7u32;
+    let pixels: Vec<u8> = (0..1600 * 2000).map(|_| { seed = seed.wrapping_mul(1_103_515_245).wrapping_add(12345); (seed >> 24) as u8 }).collect();
+    let mut stream = Stream::new(dictionary! { "Type" => "XObject", "Subtype" => "Image", "Width" => 1600, "Height" => 2000, "ColorSpace" => "DeviceGray", "BitsPerComponent" => 8 }, pixels);
+    stream.compress().unwrap();
+    let image_id = doc.add_object(stream);
+    let content = doc.add_object(Stream::new(dictionary! {}, b"q 595 0 0 842 0 0 cm /Im0 Do Q".to_vec()));
+    let page = doc.add_object(dictionary! { "Type" => "Page", "Parent" => pages_id, "MediaBox" => vec![0.into(), 0.into(), 595.into(), 842.into()], "Contents" => content, "Resources" => dictionary! { "XObject" => dictionary! { "Im0" => image_id } } });
+    doc.objects.insert(pages_id, Object::Dictionary(dictionary! { "Type" => "Pages", "Kids" => vec![page.into()], "Count" => 1 }));
+    let catalog = doc.add_object(dictionary! { "Type" => "Catalog", "Pages" => pages_id });
+    doc.trailer.set("Root", catalog);
+    doc.save(&input).unwrap();
+
+    let outcome = compress::compress(&input, Level::Balanced, false, &dir.0, NO_PROGRESS).unwrap();
+    let out = outcome.output.expect("smaller");
+    assert_eq!(assert_jpeg_colorspaces_match(&out), 1);
+}
+
+/// The user's real-world file: `BELGE_TIFF=/path/file.tif cargo test -- --ignored`
+#[test]
+#[ignore]
+fn real_tiff_to_pdf() {
+    let Some(input) = std::env::var_os("BELGE_TIFF") else { return };
+    let dir = TempDir::new("realtiff");
+    let out = dir.path("tiff.pdf");
+    let pages = images::images_to_pdf(&[PathBuf::from(input)], &ImageOptions::default(), &out, NO_PROGRESS).unwrap();
+    let checked = assert_jpeg_colorspaces_match(&out);
+    println!("pages={pages} jpegs checked={checked}");
+    if let Some(keep) = std::env::var_os("BELGE_OUT") {
+        std::fs::copy(&out, Path::new(&keep).join("tiff-fixed.pdf")).unwrap();
+    }
+}
