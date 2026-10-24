@@ -37,13 +37,19 @@ struct Paragraph {
     runs: Vec<Run>,
 }
 
+struct Row {
+    attrs: Attrs,
+    cells: Vec<Vec<Block>>,
+}
+
 enum Block {
     Paragraph(Paragraph),
-    Table { attrs: Attrs, rows: Vec<Vec<Vec<Paragraph>>> },
+    Table { attrs: Attrs, rows: Vec<Row> },
 }
 
 struct PageNumber {
     leading: String,
+    trailing: String,
     separator: String,
     total: bool,
     align: &'static str,
@@ -223,11 +229,9 @@ fn table(node: roxmltree::Node, base: &Attrs, styles: &HashMap<String, Attrs>) -
     let rows = node
         .children()
         .filter(|n| n.has_tag_name("row"))
-        .map(|row| {
-            row.children()
-                .filter(|n| n.has_tag_name("cell"))
-                .map(|cell| cell.children().filter(|n| n.has_tag_name("paragraph")).map(|p| paragraph(p, base, styles)).collect())
-                .collect()
+        .map(|row| Row {
+            attrs: attrs_of(row),
+            cells: row.children().filter(|n| n.has_tag_name("cell")).map(|cell| blocks(cell, base, styles)).collect(),
         })
         .collect();
     Block::Table { attrs: attrs_of(node), rows }
@@ -246,11 +250,16 @@ fn page_number(a: &Attrs) -> Option<PageNumber> {
     if a.get("pageNumber-fontItalic").map(String::as_str) == Some("true") {
         css.push_str("font-style:italic;");
     }
+    if a.get("pageNumber-fontUnderline").map(String::as_str) == Some("true") {
+        css.push_str("text-decoration:underline;");
+    }
     Some(PageNumber {
         leading: a.get("pageNumber-foreStr").cloned().unwrap_or_default(),
+        trailing: a.get("pageNumber-afterStr").cloned().unwrap_or_default(),
         separator: a.get("pageNumber-seperator").cloned().unwrap_or_else(|| "/".into()),
         total: flags & 2048 != 0,
-        align: if flags & 16 != 0 { "left" } else if flags & 32 != 0 { "right" } else { "center" },
+        // Bits of BSP32_n: 8 shows the number, 32 centres it, 64 right-aligns it, 2048 adds "/total".
+        align: if flags & 32 != 0 { "center" } else if flags & 64 != 0 { "right" } else { "left" },
         css,
         start: a.get("pageNumber-pageStartNumStr").and_then(|v| v.parse().ok()).unwrap_or(1),
     })
@@ -313,6 +322,9 @@ fn font_css(a: &Attrs) -> String {
     if let Some(c) = color(a.get("foreground")) {
         write!(css, "color:{c};").ok();
     }
+    if let Some(c) = a.get("background").filter(|v| !v.is_empty()).and_then(|v| color(Some(v))) {
+        write!(css, "background-color:{c};").ok();
+    }
     if a.get("superscript").map(String::as_str) == Some("true") {
         css.push_str("vertical-align:super;font-size:smaller;");
     }
@@ -322,26 +334,154 @@ fn font_css(a: &Attrs) -> String {
     css
 }
 
+/// UYAP list numbering. Each level's look comes from the paragraph's own `SecListTypeLevelN`
+/// (first one seen per list), level 1 falls back to NumberType/BulletType, deeper levels to the
+/// editor's defaults. Counters run per ListId; a shallower item restarts deeper levels and
+/// `NumberSetted=n` makes the next item n+1.
 #[derive(Default)]
-struct Counters(HashMap<String, i64>);
+struct ListPlan {
+    secondary: HashMap<String, HashMap<u32, String>>,
+    own: HashMap<String, HashMap<u32, String>>,
+    counters: HashMap<String, std::collections::BTreeMap<u32, i64>>,
+}
 
-impl Counters {
-    fn label(&mut self, a: &Attrs) -> Option<String> {
-        if a.get("Bulleted").map(String::as_str) == Some("true") {
-            return Some("•".into());
-        }
-        if a.get("Numbered").map(String::as_str) != Some("true") {
-            return None;
-        }
-        let key = format!("{}:{}", a.get("ListId").map(String::as_str).unwrap_or("0"), a.get("ListLevel").map(String::as_str).unwrap_or("1"));
-        let n = self.0.entry(key).or_default();
-        *n += 1;
-        Some(match a.get("NumberType").or_else(|| a.get("SecListTypeLevel1")).map(String::as_str) {
-            Some("NUMBER_TYPE_NUMBER_TRE") => format!("{n}-"),
-            Some("NUMBER_TYPE_NUMBER_PARANTEZ") => format!("{n})"),
-            _ => format!("{n}."),
-        })
+fn is_true(a: &Attrs, key: &str) -> bool {
+    a.get(key).map(String::as_str) == Some("true")
+}
+
+fn list_id(a: &Attrs) -> Option<String> {
+    (is_true(a, "Numbered") || is_true(a, "Bulleted")).then(|| a.get("ListId").cloned().unwrap_or_else(|| "0".into()))
+}
+
+fn list_level(a: &Attrs) -> u32 {
+    a.get("ListLevel").and_then(|v| v.trim().parse::<u32>().ok()).unwrap_or(1).clamp(1, 9)
+}
+
+impl ListPlan {
+    fn new(blocks: &[Block]) -> Self {
+        let mut plan = Self::default();
+        plan.visit(blocks);
+        plan
     }
+
+    fn visit(&mut self, blocks: &[Block]) {
+        for block in blocks {
+            match block {
+                Block::Paragraph(p) => {
+                    let Some(id) = list_id(&p.attrs) else { continue };
+                    let level = list_level(&p.attrs);
+                    if let Some(kind) = p.attrs.get(&format!("SecListTypeLevel{level}")).filter(|v| !v.is_empty()) {
+                        self.secondary.entry(id.clone()).or_default().entry(level).or_insert_with(|| kind.clone());
+                    }
+                    let own = if is_true(&p.attrs, "Numbered") {
+                        p.attrs.get("NumberType").cloned().unwrap_or_else(|| "NUMBER_TYPE_NUMBER_DOT".into())
+                    } else {
+                        p.attrs.get("BulletType").cloned().unwrap_or_else(|| "BULLET_TYPE_ELLIPSE".into())
+                    };
+                    self.own.entry(id).or_default().entry(level).or_insert(own);
+                }
+                Block::Table { rows, .. } => {
+                    for row in rows {
+                        for cell in &row.cells {
+                            self.visit(cell);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fn kind(&self, id: &str, level: u32) -> String {
+        if let Some(kind) = self.secondary.get(id).and_then(|m| m.get(&level)) {
+            return kind.clone();
+        }
+        let own = self.own.get(id);
+        let first = own
+            .and_then(|m| m.get(&1).cloned().or_else(|| m.iter().min_by_key(|(k, _)| **k).map(|(_, v)| v.clone())))
+            .unwrap_or_else(|| "NUMBER_TYPE_NUMBER_DOT".into());
+        if level == 1 {
+            return first;
+        }
+        let bulleted = own.and_then(|m| m.get(&level)).unwrap_or(&first).starts_with("BULLET");
+        if bulleted {
+            return if level == 3 { "BULLET_TYPE_RECTANGLE_D" } else { "BULLET_TYPE_RECTANGLE" }.into();
+        }
+        match level {
+            2 => "NUMBER_TYPE_CHAR_SMALL_DOT",
+            3 => "NUMBER_TYPE_ROMAN_SMALL_DOT",
+            4 => "NUMBER_TYPE_NUMBER_D_PARANTHESE",
+            5 => "NUMBER_TYPE_CHAR_SMALL_D_PARANTHESE",
+            6 => "NUMBER_TYPE_ROMAN_SMALL_D_PARANTHESE",
+            _ => "NUMBER_TYPE_NUMBER_DOT",
+        }
+        .into()
+    }
+
+    /// The label for the next item of this paragraph's list, and whether it is a bullet.
+    fn next(&mut self, a: &Attrs) -> Option<(String, bool)> {
+        let id = list_id(a)?;
+        let level = list_level(a);
+        let kind = self.kind(&id, level);
+        let counter = self.counters.entry(id).or_default();
+        counter.retain(|k, _| *k <= level);
+        if let Some(n) = a.get("NumberSetted").and_then(|v| v.trim().parse::<f64>().ok()) {
+            counter.insert(level, n as i64);
+        }
+        let n = counter.entry(level).or_insert(0);
+        *n += 1;
+        Some(list_label(&kind, *n))
+    }
+}
+
+fn roman(mut n: i64) -> String {
+    let mut out = String::new();
+    for (v, r) in [(1000, "m"), (900, "cm"), (500, "d"), (400, "cd"), (100, "c"), (90, "xc"), (50, "l"), (40, "xl"), (10, "x"), (9, "ix"), (5, "v"), (4, "iv"), (1, "i")] {
+        while n >= v {
+            out.push_str(r);
+            n -= v;
+        }
+    }
+    out
+}
+
+/// Label text for a list item; letters follow the 29-letter Turkish alphabet, then double (aa, bb…).
+fn list_label(kind: &str, number: i64) -> (String, bool) {
+    if let Some(bullet) = kind.strip_prefix("BULLET_TYPE_") {
+        let symbol = match bullet {
+            "ARROW" => "\u{27A2}",
+            "DIAMOND" | "DIAMOND_2" => "\u{25C6}",
+            "RECTANGLE" => "\u{25AA}",
+            "RECTANGLE_D" => "\u{25AB}",
+            "TRIANGLE" => "\u{25B6}",
+            _ => "\u{2022}",
+        };
+        return (symbol.into(), true);
+    }
+    let n = number.max(1);
+    let value = if kind.starts_with("NUMBER_TYPE_CHAR") {
+        let letters: Vec<char> = if kind.contains("CHAR_BIG") { "ABCÇDEFGĞHIİJKLMNOÖPRSŞTUÜVYZ" } else { "abcçdefgğhıijklmnoöprsştuüvyz" }.chars().collect();
+        let len = letters.len() as i64;
+        letters[((n - 1) % len) as usize].to_string().repeat(((n - 1) / len + 1) as usize)
+    } else if kind.starts_with("NUMBER_TYPE_ROMAN") {
+        if kind.contains("ROMAN_BIG") { roman(n).to_uppercase() } else { roman(n) }
+    } else {
+        n.to_string()
+    };
+    let tail = kind.rsplit("_TYPE_").next().unwrap_or("");
+    let text = if tail.ends_with("D_PARANTHESE") {
+        format!("({value})")
+    } else if tail.contains("PARANTHESE") || tail.contains("PARANTEZ") {
+        format!("{value})")
+    } else if tail.ends_with("TRE") {
+        format!("{value}-")
+    } else {
+        format!("{value}.")
+    };
+    (text, false)
+}
+
+fn spans(value: Option<&String>) -> Vec<f32> {
+    value.map(|s| s.split(',').filter_map(|v| v.trim().parse::<f32>().ok()).filter(|v| *v > 0.0).collect()).unwrap_or_default()
 }
 
 impl UdfDocument {
@@ -355,7 +495,7 @@ impl UdfDocument {
             .collect()
     }
 
-    fn paragraph_html(&self, p: &Paragraph, counters: &mut Counters, out: &mut String) {
+    fn paragraph_html(&self, p: &Paragraph, lists: &mut ListPlan, out: &mut String) {
         let a = &p.attrs;
         let left = num(a.get("LeftIndent"), 0.0).max(0.0);
         let right = num(a.get("RightIndent"), 0.0).max(0.0);
@@ -369,30 +509,49 @@ impl UdfDocument {
             Some("3") => "justify",
             _ => "left",
         };
-        // Tab stops are measured from the paragraph's left edge (LeftIndent included).
-        let mut stops: Vec<f32> = a
+        // TabSet = "position:alignment:leader,…" measured from LeftIndent. Alignment 0 left, 1 right,
+        // 2 centre, 4 decimal, 5 bar; leader 1 dots, 2 dashes, 3 underscore, 4 heavy line.
+        let stops: Vec<String> = a
             .get("TabSet")
-            .map(|s| s.split(',').filter_map(|t| t.split(':').next()?.trim().parse::<f32>().ok()).map(|x| x + left).collect())
+            .map(|s| {
+                s.split(',')
+                    .filter_map(|t| {
+                        let mut parts = t.split(':').map(str::trim);
+                        let position = parts.next()?.parse::<f32>().ok()?;
+                        let alignment = parts.next().and_then(|v| v.parse::<u32>().ok()).unwrap_or(0);
+                        let leader = parts.next().and_then(|v| v.parse::<u32>().ok()).unwrap_or(0);
+                        Some(format!("{:.2}:{alignment}:{leader}", position + left))
+                    })
+                    .collect()
+            })
             .unwrap_or_default();
         let default_interval = if stops.is_empty() { 72.0 } else { 5.0 };
-        let label = counters.label(a);
-        if label.is_some() {
-            stops.insert(0, (left + hanging).max(left + first.max(0.0) + 18.0));
-        }
-        let stops_attr = stops.iter().map(|s| format!("{s:.2}")).collect::<Vec<_>>().join(",");
 
+        // UYAP draws list numbers right-aligned about 6 pt before the text and bullets 18 pt before it.
+        let label = lists.next(a);
+        let size = num(a.get("size"), 12.0).max(1.0);
+        let mut text_start = (left + first).max(0.0);
+        if let Some((text, _)) = &label {
+            text_start = text_start.max(text.chars().count() as f32 * size * 0.6 + 8.0);
+        }
         write!(
             out,
-            "<p data-tabs=\"{stops_attr}\" data-def=\"{default_interval}\" style=\"text-align:{align};padding-left:{:.2}pt;padding-right:{right:.2}pt;text-indent:{:.2}pt;margin:{:.2}pt 0 {:.2}pt 0;line-height:{line:.4};{}\">",
+            "<p data-tabs=\"{}\" data-def=\"{default_interval}\" style=\"position:relative;text-align:{align};padding-left:{:.2}pt;padding-right:{right:.2}pt;text-indent:{:.2}pt;margin:{:.2}pt 0 {:.2}pt 0;line-height:{line:.4};{}\">",
+            stops.join(","),
             left + hanging,
-            (left + first.max(-left)) - (left + hanging),
+            text_start - (left + hanging),
             num(a.get("SpaceAbove"), 0.0).max(0.0),
             num(a.get("SpaceBelow"), 0.0).max(0.0),
             font_css(a)
         )
         .ok();
-        if let Some(label) = label {
-            write!(out, "<span>{}</span><span class=\"tab\">\u{2007}</span>", esc(&label)).ok();
+        if let Some((text, bullet)) = label {
+            let placement = if bullet {
+                format!("left:{:.2}pt", (text_start - 18.0).max(0.0))
+            } else {
+                format!("left:0;width:{:.2}pt;text-align:right", (text_start - 6.0).max(0.0))
+            };
+            write!(out, "<span class=\"lbl\" style=\"position:absolute;top:0;text-indent:0;white-space:nowrap;text-decoration:none;{placement}\">{}</span>", esc(&text)).ok();
         }
         let mut visible = false;
         for run in &p.runs {
@@ -429,47 +588,93 @@ impl UdfDocument {
 
     fn blocks_html(&self, blocks: &[Block], width: f32) -> String {
         let mut out = String::new();
-        let mut counters = Counters::default();
+        let mut lists = ListPlan::new(blocks);
+        self.blocks_into(blocks, width, &mut lists, &mut out);
+        out
+    }
+
+    fn blocks_into(&self, blocks: &[Block], width: f32, lists: &mut ListPlan, out: &mut String) {
         for block in blocks {
             match block {
-                Block::Paragraph(p) => self.paragraph_html(p, &mut counters, &mut out),
-                Block::Table { attrs, rows } => {
-                    let columns = rows.iter().map(Vec::len).max().unwrap_or(1).max(1);
-                    let mut spans: Vec<f32> = attrs.get("columnSpans").map(|s| s.split(',').filter_map(|v| v.trim().parse().ok()).collect()).unwrap_or_default();
-                    if spans.len() != columns {
-                        spans = vec![width / columns as f32; columns];
-                    }
-                    let total: f32 = spans.iter().sum();
-                    if total > width {
-                        spans.iter_mut().for_each(|s| *s *= width / total);
-                    }
-                    let border = if attrs.get("border").map(String::as_str).unwrap_or("borderNone") != "borderNone" { "border:0.5pt solid #000;" } else { "" };
-                    write!(out, "<table style=\"width:{:.2}pt\"><colgroup>", spans.iter().sum::<f32>()).ok();
-                    for s in &spans {
-                        write!(out, "<col style=\"width:{s:.2}pt\">").ok();
-                    }
-                    out.push_str("</colgroup>");
-                    for row in rows {
-                        out.push_str("<tr>");
-                        for c in 0..columns {
-                            write!(out, "<td style=\"{border}\">").ok();
-                            match row.get(c) {
-                                Some(paragraphs) if !paragraphs.is_empty() => {
-                                    for p in paragraphs {
-                                        self.paragraph_html(p, &mut counters, &mut out);
-                                    }
-                                }
-                                _ => out.push_str("<p>\u{200B}</p>"),
-                            }
-                            out.push_str("</td>");
-                        }
-                        out.push_str("</tr>");
-                    }
-                    out.push_str("</table>");
-                }
+                Block::Paragraph(p) => self.paragraph_html(p, lists, out),
+                Block::Table { attrs, rows } => self.table_html(attrs, rows, width, lists, out),
             }
         }
-        out
+    }
+
+    /// `columnSpans` are ratios of the table width, per table and optionally per row (merged cells);
+    /// all rows share one grid of column boundaries. Border types: borderCell (every line),
+    /// borderTable (outline only), borderRow (outline and row lines), borderNone.
+    fn table_html(&self, attrs: &Attrs, rows: &[Row], width: f32, lists: &mut ListPlan, out: &mut String) {
+        if rows.is_empty() {
+            return;
+        }
+        let left = num(attrs.get("LeftIndent"), 0.0).max(0.0);
+        let right = num(attrs.get("RightIndent"), 0.0).max(0.0);
+        let table_width = (width - left - right).max(40.0);
+        let table_spans = spans(attrs.get("columnSpans"));
+        let fractions: Vec<Vec<f32>> = rows
+            .iter()
+            .map(|row| {
+                let count = row.cells.len().max(1);
+                let mut ratios = spans(row.attrs.get("columnSpans"));
+                if ratios.len() != count {
+                    ratios = if table_spans.len() == count { table_spans.clone() } else { vec![1.0; count] };
+                }
+                let total: f32 = ratios.iter().sum();
+                ratios.into_iter().map(|r| r / total).collect()
+            })
+            .collect();
+        const SCALE: f32 = 10_000.0;
+        let mut bounds = std::collections::BTreeSet::from([0i64, SCALE as i64]);
+        for row in &fractions {
+            let mut sum = 0.0;
+            for f in row {
+                sum += f;
+                bounds.insert((sum * SCALE).round() as i64);
+            }
+        }
+        let grid: Vec<i64> = bounds.into_iter().collect();
+        let widths: Vec<f32> = grid.windows(2).map(|w| (w[1] - w[0]) as f32 / SCALE * table_width).collect();
+        let border = attrs.get("border").map(String::as_str).unwrap_or("borderCell");
+        let line = "0.5pt solid #000";
+
+        write!(out, "<table style=\"width:{table_width:.2}pt;margin-left:{left:.2}pt\"><colgroup>").ok();
+        for w in &widths {
+            write!(out, "<col style=\"width:{w:.2}pt\">").ok();
+        }
+        out.push_str("</colgroup>");
+        let last_row = rows.len() - 1;
+        for (r, row) in rows.iter().enumerate() {
+            out.push_str("<tr>");
+            let mut sum = 0.0;
+            for (c, cell) in row.cells.iter().enumerate() {
+                let start = grid.iter().position(|g| *g == (sum * SCALE).round() as i64).unwrap_or(0);
+                sum += fractions[r].get(c).copied().unwrap_or(0.0);
+                let end = grid.iter().position(|g| *g == (sum * SCALE).round() as i64).unwrap_or(grid.len() - 1).max(start + 1);
+                let edge = |on: bool| if on { line } else { "none" };
+                let all = border == "borderCell";
+                let outline = border == "borderTable" || border == "borderRow";
+                write!(
+                    out,
+                    "<td colspan=\"{}\" style=\"border-top:{};border-bottom:{};border-left:{};border-right:{}\">",
+                    end - start,
+                    edge(all || border == "borderRow" || (border == "borderTable" && r == 0)),
+                    edge(all || border == "borderRow" || (border == "borderTable" && r == last_row)),
+                    edge(all || (outline && start == 0)),
+                    edge(all || (outline && end == grid.len() - 1)),
+                )
+                .ok();
+                if cell.is_empty() {
+                    out.push_str("<p>\u{200B}</p>");
+                } else {
+                    self.blocks_into(cell, widths[start..end].iter().sum(), lists, out);
+                }
+                out.push_str("</td>");
+            }
+            out.push_str("</tr>");
+        }
+        out.push_str("</table>");
     }
 }
 
@@ -480,12 +685,18 @@ img{vertical-align:baseline}\
 table{border-collapse:collapse;table-layout:fixed}\
 td{vertical-align:top;padding:1pt}";
 
-/// Widens every tab so the following text lands on the paragraph's next tab stop.
+/// Widens every tab so the following text lands on the paragraph's next tab stop (left, right,
+/// centre or decimal), and draws the stop's leader (dots, dashes, line) as a styled underline.
 const TAB_SCRIPT: &str = "function layoutTabs(root){for(const p of root.querySelectorAll('p[data-tabs]')){\
-const stops=p.dataset.tabs?p.dataset.tabs.split(',').map(Number):[];const def=Number(p.dataset.def)||72;\
-const left=p.getBoundingClientRect().left;for(const t of p.querySelectorAll('.tab')){t.style.letterSpacing='0';\
-const r=t.getBoundingClientRect();const x=(r.left-left)*0.75,w0=r.width*0.75;let next=stops.find(s=>s>x+0.5);\
-if(next===undefined)next=(Math.floor(x/def+1e-6)+1)*def;t.style.letterSpacing=(next-x-w0)+'pt';}}}";
+const stops=p.dataset.tabs?p.dataset.tabs.split(',').map(s=>{const v=s.split(':').map(Number);return{l:v[0],a:v[1]||0,d:v[2]||0};}):[];\
+const def=Number(p.dataset.def)||72;const left=p.getBoundingClientRect().left;const tabs=[...p.querySelectorAll('.tab')];\
+tabs.forEach((t,i)=>{t.style.letterSpacing='0';const r=t.getBoundingClientRect();const x=(r.left-left)*0.75,w0=r.width*0.75;\
+const s=stops.find(s=>s.l>x+0.5);let target;if(s){let seg=0;if(s.a===1||s.a===2||s.a===4){const g=document.createRange();\
+g.setStartAfter(t);const n=tabs[i+1];if(n)g.setEndBefore(n);else g.setEndAfter(p.lastChild);seg=g.getBoundingClientRect().width*0.75;}\
+target=s.a===2?s.l-seg/2:(s.a===1||s.a===4)?s.l-seg:s.l;target=Math.max(target,x+w0);\
+if(s.d){t.style.textDecorationLine='underline';t.style.textDecorationStyle=s.d===1?'dotted':s.d===2?'dashed':'solid';\
+t.style.textDecorationThickness=s.d===4?'2px':s.d===1?'1.5px':'1px';}}\
+else target=(Math.floor(x/def+1e-6)+1)*def;t.style.letterSpacing=(target-x-w0)+'pt';});}}";
 
 /// Body pages. A script measures the header and footer, then sets the page margins so the text
 /// flows between them. The resulting margins are also published in `location.hash` for the printer.
@@ -547,6 +758,7 @@ pub fn decoration_html(doc: &UdfDocument, pages: usize) -> String {
                 if n.total {
                     write!(text, "{}{}", n.separator, n.start + pages as i64 - 1).ok();
                 }
+                text.push_str(&n.trailing);
                 let place = if top { format!("top:{}pt", doc.header_offset) } else { format!("bottom:{}pt", doc.footer_offset) };
                 write!(out, "<div class=\"pn\" style=\"{place};text-align:{};{}\">{}</div>", n.align, n.css, esc(&text)).ok();
             }
@@ -644,4 +856,11 @@ pub fn underlay(body: &mut Document, mut decoration: Document) -> Result<()> {
 
 pub fn decode_base64(data: &str) -> Option<Vec<u8>> {
     base64::engine::general_purpose::STANDARD.decode(clean_base64(data)).ok()
+}
+
+#[cfg(test)]
+pub(crate) mod tests_support {
+    pub fn label(kind: &str, n: i64) -> String {
+        super::list_label(kind, n).0
+    }
 }

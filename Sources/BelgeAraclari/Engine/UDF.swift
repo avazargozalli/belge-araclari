@@ -65,9 +65,14 @@ struct UDFParagraph {
     let runs: [UDFRun]
 }
 
+struct UDFRow {
+    let attrs: [String: String]
+    let cells: [[UDFBlock]]
+}
+
 struct UDFTable {
     let attrs: [String: String]
-    let rows: [[[UDFParagraph]]]
+    let rows: [UDFRow]
 }
 
 enum UDFBlock {
@@ -77,7 +82,9 @@ enum UDFBlock {
 
 struct UDFPageNumber {
     let leading: String
+    let trailing: String
     let separator: String
+    let underline: Bool
     let showTotal: Bool
     let alignment: NSTextAlignment
     let font: NSFont
@@ -221,9 +228,7 @@ enum UDFParser {
 
     private static func table(_ element: XMLElement, base: [String: String], styles: [String: [String: String]]) -> UDFTable {
         let rows = element.elements(forName: "row").map { row in
-            row.elements(forName: "cell").map { cell in
-                cell.elements(forName: "paragraph").map { paragraph($0, base: base, styles: styles) }
-            }
+            UDFRow(attrs: attributes(of: row), cells: row.elements(forName: "cell").map { blocks(in: $0, base: base, styles: styles) })
         }
         return UDFTable(attrs: attributes(of: element), rows: rows)
     }
@@ -234,8 +239,11 @@ enum UDFParser {
         var font = NSFont(name: a["pageNumber-fontFace"] ?? "Arial", size: size) ?? .systemFont(ofSize: size)
         if a["pageNumber-fontBold"] == "true" { font = NSFontManager.shared.convert(font, toHaveTrait: .boldFontMask) }
         if a["pageNumber-fontItalic"] == "true" { font = NSFontManager.shared.convert(font, toHaveTrait: .italicFontMask) }
-        let alignment: NSTextAlignment = flags & 16 != 0 ? .left : (flags & 32 != 0 ? .right : .center)
-        return UDFPageNumber(leading: a["pageNumber-foreStr"] ?? "", separator: a["pageNumber-seperator"] ?? "/",
+        // Bits of BSP32_n: 8 shows the number, 32 centres it, 64 right-aligns it, 2048 adds "/total".
+        let alignment: NSTextAlignment = flags & 32 != 0 ? .center : (flags & 64 != 0 ? .right : .left)
+        return UDFPageNumber(leading: a["pageNumber-foreStr"] ?? "", trailing: a["pageNumber-afterStr"] ?? "",
+                             separator: a["pageNumber-seperator"] ?? "/",
+                             underline: a["pageNumber-fontUnderline"] == "true",
                              showTotal: flags & 2048 != 0, alignment: alignment, font: font,
                              color: color(a["pageNumber-color"]) ?? .black, start: Int(a["pageNumber-pageStartNumStr"] ?? "") ?? 1)
     }
@@ -259,14 +267,111 @@ enum UDFParser {
     }
 }
 
+// MARK: - Lists
+
+/// UYAP list numbering. Each level's look comes from the paragraph's own `SecListTypeLevelN`
+/// (first one seen per list), level 1 falls back to NumberType/BulletType, deeper levels to the
+/// editor's defaults. Counters run per ListId; a shallower item restarts deeper levels and
+/// `NumberSetted=n` makes the next item n+1.
+struct UDFListPlan {
+    private var secondary: [String: [Int: String]] = [:]
+    private var own: [String: [Int: String]] = [:]
+    private var counters: [String: [Int: Int]] = [:]
+
+    private static let defaultNumbers = [2: "NUMBER_TYPE_CHAR_SMALL_DOT", 3: "NUMBER_TYPE_ROMAN_SMALL_DOT",
+                                         4: "NUMBER_TYPE_NUMBER_D_PARANTHESE", 5: "NUMBER_TYPE_CHAR_SMALL_D_PARANTHESE",
+                                         6: "NUMBER_TYPE_ROMAN_SMALL_D_PARANTHESE"]
+    private static let bullets = ["ELLIPSE": "\u{2022}", "ARROW": "\u{27A2}", "DIAMOND": "\u{25C6}", "DIAMOND_2": "\u{25C6}",
+                                  "RECTANGLE": "\u{25AA}", "RECTANGLE_D": "\u{25AB}", "TRIANGLE": "\u{25B6}"]
+    private static let lower = Array("abcçdefgğhıijklmnoöprsştuüvyz")
+    private static let upper = Array("ABCÇDEFGĞHIİJKLMNOÖPRSŞTUÜVYZ")
+
+    init(_ blocks: [UDFBlock]) { visit(blocks) }
+
+    private mutating func visit(_ blocks: [UDFBlock]) {
+        for block in blocks {
+            switch block {
+            case .paragraph(let p):
+                guard let id = Self.listId(p.attrs) else { continue }
+                let level = Self.level(p.attrs)
+                if let type = p.attrs["SecListTypeLevel\(level)"], !type.isEmpty, secondary[id]?[level] == nil {
+                    secondary[id, default: [:]][level] = type
+                }
+                if own[id]?[level] == nil {
+                    own[id, default: [:]][level] = p.attrs["Numbered"] == "true"
+                        ? (p.attrs["NumberType"] ?? "NUMBER_TYPE_NUMBER_DOT")
+                        : (p.attrs["BulletType"] ?? "BULLET_TYPE_ELLIPSE")
+                }
+            case .table(let t):
+                for row in t.rows { for cell in row.cells { visit(cell) } }
+            }
+        }
+    }
+
+    static func listId(_ a: [String: String]) -> String? {
+        guard a["Numbered"] == "true" || a["Bulleted"] == "true" else { return nil }
+        return a["ListId"] ?? "0"
+    }
+
+    static func level(_ a: [String: String]) -> Int { min(9, max(1, Int(a["ListLevel"] ?? "") ?? 1)) }
+
+    private func type(_ id: String, _ level: Int) -> String {
+        if let type = secondary[id]?[level] { return type }
+        let first = own[id]?[1] ?? own[id]?.sorted { $0.key < $1.key }.first?.value ?? "NUMBER_TYPE_NUMBER_DOT"
+        if level == 1 { return first }
+        let bulleted = (own[id]?[level] ?? first).hasPrefix("BULLET")
+        if bulleted { return level == 3 ? "BULLET_TYPE_RECTANGLE_D" : "BULLET_TYPE_RECTANGLE" }
+        return Self.defaultNumbers[level] ?? "NUMBER_TYPE_NUMBER_DOT"
+    }
+
+    /// The label for the next item of this paragraph's list, and whether it is a bullet.
+    mutating func next(_ a: [String: String]) -> (text: String, bullet: Bool)? {
+        guard let id = Self.listId(a) else { return nil }
+        let level = Self.level(a)
+        var counter = counters[id, default: [:]]
+        counter = counter.filter { $0.key <= level }
+        if let set = a["NumberSetted"], let n = Double(set) { counter[level] = Int(n) }
+        counter[level, default: 0] += 1
+        counters[id] = counter
+        return Self.label(type(id, level), counter[level]!)
+    }
+
+    static func label(_ type: String, _ number: Int) -> (text: String, bullet: Bool) {
+        if type.hasPrefix("BULLET") {
+            return (bullets[type.replacingOccurrences(of: "BULLET_TYPE_", with: "")] ?? "\u{2022}", true)
+        }
+        let n = max(1, number)
+        let value: String
+        if type.hasPrefix("NUMBER_TYPE_CHAR") {
+            let letters = type.contains("CHAR_BIG") ? upper : lower
+            value = String(repeating: String(letters[(n - 1) % letters.count]), count: (n - 1) / letters.count + 1)
+        } else if type.hasPrefix("NUMBER_TYPE_ROMAN") {
+            value = type.contains("ROMAN_BIG") ? roman(n).uppercased() : roman(n)
+        } else {
+            value = String(n)
+        }
+        let tail = type.components(separatedBy: "_TYPE_").last ?? ""
+        if tail.hasSuffix("D_PARANTHESE") { return ("(\(value))", false) }
+        if tail.contains("PARANTHESE") || tail.contains("PARANTEZ") { return ("\(value))", false) }
+        if tail.hasSuffix("TRE") { return ("\(value)-", false) }
+        return ("\(value).", false)
+    }
+
+    private static func roman(_ number: Int) -> String {
+        var n = number, out = ""
+        for (v, r) in [(1000, "m"), (900, "cm"), (500, "d"), (400, "cd"), (100, "c"), (90, "xc"), (50, "l"),
+                       (40, "xl"), (10, "x"), (9, "ix"), (5, "v"), (4, "iv"), (1, "i")] {
+            while n >= v { out += r; n -= v }
+        }
+        return out
+    }
+}
+
 // MARK: - Attributed text
 
-private struct ListCounter {
-    var counts: [String: Int] = [:]
-    mutating func next(_ key: String) -> Int {
-        counts[key, default: 0] += 1
-        return counts[key]!
-    }
+extension NSAttributedString.Key {
+    /// Tab stops of the paragraph (location → leader kind) so leaders can be drawn after layout.
+    static let udfTabLeaders = NSAttributedString.Key("BelgeAraclariTabLeaders")
 }
 
 enum UDFTypesetter {
@@ -287,7 +392,30 @@ enum UDFTypesetter {
         return font
     }
 
-    static func paragraphStyle(_ a: [String: String], width: CGFloat) -> NSMutableParagraphStyle {
+    /// Paragraph geometry shared by the layout and the list labels.
+    struct Indents {
+        let left: CGFloat, right: CGFloat, first: CGFloat, hanging: CGFloat
+        init(_ a: [String: String]) {
+            left = max(0, UDFParser.number(a["LeftIndent"], 0))
+            right = max(0, UDFParser.number(a["RightIndent"], 0))
+            first = UDFParser.number(a["FirstLineIndent"], 0)
+            hanging = max(0, UDFParser.number(a["Hanging"], 0))
+        }
+        /// x of the first line's text: LeftIndent + FirstLineIndent. Wrapped lines: LeftIndent + Hanging.
+        var textStart: CGFloat { max(0, left + first) }
+    }
+
+    /// TabSet = "position:alignment:leader,…" measured from LeftIndent.
+    /// Alignment 0 left, 1 right, 2 centre, 4 decimal, 5 bar; leader 1 dots, 2 dashes, 3 underscore, 4 heavy line.
+    static func tabStops(_ a: [String: String], left: CGFloat) -> [(location: CGFloat, alignment: Int, leader: Int)] {
+        (a["TabSet"] ?? "").split(separator: ",").compactMap { item in
+            let parts = item.split(separator: ":").map { $0.trimmingCharacters(in: .whitespaces) }
+            guard let position = Double(parts.first ?? "") else { return nil }
+            return (CGFloat(position) + left, parts.count > 1 ? Int(parts[1]) ?? 0 : 0, parts.count > 2 ? Int(parts[2]) ?? 0 : 0)
+        }
+    }
+
+    static func paragraphStyle(_ a: [String: String], blocks: [NSTextBlock]) -> NSMutableParagraphStyle {
         let style = NSMutableParagraphStyle()
         switch a["Alignment"] {
         case "1": style.alignment = .center
@@ -295,44 +423,31 @@ enum UDFTypesetter {
         case "3": style.alignment = .justified
         default: style.alignment = .left
         }
-        let left = max(0, UDFParser.number(a["LeftIndent"], 0))
-        let right = max(0, UDFParser.number(a["RightIndent"], 0))
-        let first = UDFParser.number(a["FirstLineIndent"], 0)
-        let hanging = max(0, UDFParser.number(a["Hanging"], 0))
-        style.firstLineHeadIndent = max(0, left + first)
-        style.headIndent = left + hanging
-        style.tailIndent = -right
+        let indents = Indents(a)
+        style.firstLineHeadIndent = indents.textStart
+        style.headIndent = indents.left + indents.hanging
+        style.tailIndent = -indents.right
         // Swing LineSpacing is extra space as a fraction of the line height.
         let extra = UDFParser.number(a["LineSpacing"], 0)
         style.lineHeightMultiple = max(0.7, 1 + (extra < -0.3 ? 0 : extra))
         style.paragraphSpacingBefore = max(0, UDFParser.number(a["SpaceAbove"], 0))
         style.paragraphSpacing = max(0, UDFParser.number(a["SpaceBelow"], 0))
 
-        // TabSet = "position:alignment:leader,…"; without one Swing uses a stop every 72 pt.
-        let stops: [NSTextTab] = (a["TabSet"] ?? "").split(separator: ",").compactMap { item in
-            let parts = item.split(separator: ":")
-            guard let position = Double(parts.first ?? "") else { return nil }
-            let alignment: NSTextAlignment = parts.count > 1 && parts[1] == "1" ? .right : (parts.count > 1 && parts[1] == "2" ? .center : .left)
-            return NSTextTab(textAlignment: alignment, location: CGFloat(position) + left)
+        let stops = tabStops(a, left: indents.left)
+        style.tabStops = stops.map { stop in
+            switch stop.alignment {
+            case 1: return NSTextTab(textAlignment: .right, location: stop.location)
+            case 2: return NSTextTab(textAlignment: .center, location: stop.location)
+            case 4: return NSTextTab(textAlignment: .right, location: stop.location,
+                                     options: [.columnTerminators: CharacterSet(charactersIn: ",.")])
+            default: return NSTextTab(textAlignment: .left, location: stop.location)
+            }
         }
-        style.tabStops = stops
+        // Without a TabSet Swing uses a stop every 72 pt; past the last explicit stop it advances a few points.
         style.defaultTabInterval = stops.isEmpty ? 72 : 5
         style.lineBreakMode = .byWordWrapping
+        style.textBlocks = blocks
         return style
-    }
-
-    private static func listLabel(_ a: [String: String], counter: inout ListCounter) -> String? {
-        let key = (a["ListId"] ?? "0") + ":" + (a["ListLevel"] ?? "1")
-        if a["Bulleted"] == "true" {
-            return "•"
-        }
-        guard a["Numbered"] == "true" else { return nil }
-        let n = counter.next(key)
-        switch a["NumberType"] ?? a["SecListTypeLevel1"] {
-        case "NUMBER_TYPE_NUMBER_TRE": return "\(n)-"
-        case "NUMBER_TYPE_NUMBER_PARANTEZ": return "\(n))"
-        default: return "\(n)."
-        }
     }
 
     /// Characters in the Private Use Area render as empty boxes in standard fonts; UYAP shows nothing.
@@ -341,14 +456,18 @@ enum UDFTypesetter {
     }
 
     static func attributed(_ blocks: [UDFBlock], doc: UDFDocument, width: CGFloat) -> NSAttributedString {
+        var lists = UDFListPlan(blocks)
+        return attributed(blocks, doc: doc, width: width, lists: &lists, chain: [])
+    }
+
+    private static func attributed(_ blocks: [UDFBlock], doc: UDFDocument, width: CGFloat, lists: inout UDFListPlan, chain: [NSTextBlock]) -> NSAttributedString {
         let result = NSMutableAttributedString()
-        var counter = ListCounter()
         for block in blocks {
             switch block {
             case .paragraph(let p):
-                result.append(paragraph(p, doc: doc, width: width, counter: &counter, block: nil))
+                result.append(paragraph(p, doc: doc, lists: &lists, chain: chain))
             case .table(let t):
-                result.append(table(t, doc: doc, width: width, counter: &counter))
+                result.append(table(t, doc: doc, width: width, lists: &lists, chain: chain))
             }
         }
         return result
@@ -364,18 +483,35 @@ enum UDFTypesetter {
         if a["strikethrough"] == "true" { attrs[.strikethroughStyle] = NSUnderlineStyle.single.rawValue }
         if a["superscript"] == "true" { attrs[.superscript] = 1 }
         if a["subscript"] == "true" { attrs[.superscript] = -1 }
+        if let background = a["background"], !background.isEmpty, let color = UDFParser.color(background) {
+            attrs[.backgroundColor] = color
+        }
         return attrs
     }
 
-    private static func paragraph(_ p: UDFParagraph, doc: UDFDocument, width: CGFloat, counter: inout ListCounter, block: NSTextBlock?) -> NSAttributedString {
-        let style = paragraphStyle(p.attrs, width: width)
-        if let block { style.textBlocks = [block] }
+    private static func paragraph(_ p: UDFParagraph, doc: UDFDocument, lists: inout UDFListPlan, chain: [NSTextBlock]) -> NSAttributedString {
+        let style = paragraphStyle(p.attrs, blocks: chain)
+        let indents = Indents(p.attrs)
         let out = NSMutableAttributedString()
-        if let label = listLabel(p.attrs, counter: &counter) {
-            let tabLocation = max(style.headIndent, style.firstLineHeadIndent + 18)
-            style.tabStops = [NSTextTab(textAlignment: .left, location: tabLocation)] + style.tabStops
-            out.append(NSAttributedString(string: label + "\t", attributes: runAttributes(p.attrs, paragraphStyle: style)))
+
+        if let label = lists.next(p.attrs) {
+            // UYAP draws numbers right-aligned about 6 pt before the text and bullets 18 pt before it.
+            let labelAttrs = runAttributes(p.attrs, paragraphStyle: style)
+            let labelWidth = (label.text as NSString).size(withAttributes: labelAttrs).width
+            let textStart = max(indents.textStart, labelWidth + 8)
+            var tabs: [NSTextTab] = []
+            if label.bullet {
+                style.firstLineHeadIndent = max(0, textStart - 18)
+                out.append(NSAttributedString(string: label.text + "\t", attributes: labelAttrs))
+            } else {
+                style.firstLineHeadIndent = 0
+                tabs.append(NSTextTab(textAlignment: .right, location: textStart - 6))
+                out.append(NSAttributedString(string: "\t" + label.text + "\t", attributes: labelAttrs))
+            }
+            tabs.append(NSTextTab(textAlignment: .left, location: textStart))
+            style.tabStops = tabs + style.tabStops.filter { $0.location > textStart }
         }
+
         var lastAttrs = runAttributes(p.attrs, paragraphStyle: style)
         for run in p.runs {
             let attrs = runAttributes(run.attrs, paragraphStyle: style)
@@ -401,45 +537,123 @@ enum UDFTypesetter {
         if !out.string.hasSuffix("\n") {
             out.append(NSAttributedString(string: "\n", attributes: lastAttrs))
         }
-        out.addAttribute(.paragraphStyle, value: style, range: NSRange(location: 0, length: out.length))
+        let whole = NSRange(location: 0, length: out.length)
+        out.addAttribute(.paragraphStyle, value: style, range: whole)
+        let leaders = tabStops(p.attrs, left: indents.left)
+        if leaders.contains(where: { $0.leader != 0 }) {
+            out.addAttribute(.udfTabLeaders, value: Dictionary(leaders.map { ($0.location, $0.leader) }) { a, _ in a }, range: whole)
+        }
         return out
     }
 
-    private static func table(_ t: UDFTable, doc: UDFDocument, width: CGFloat, counter: inout ListCounter) -> NSAttributedString {
+    private static func spans(_ value: String?) -> [CGFloat] {
+        (value ?? "").split(separator: ",").compactMap { Double($0.trimmingCharacters(in: .whitespaces)).map { CGFloat($0) } }.filter { $0 > 0 }
+    }
+
+    /// Tables: `columnSpans` are ratios of the table width, per table and optionally per row (merged
+    /// cells). All rows are placed on one shared grid of column boundaries. Border types: borderCell
+    /// (every line), borderTable (outline only), borderRow (outline and row lines), borderNone.
+    private static func table(_ t: UDFTable, doc: UDFDocument, width: CGFloat, lists: inout UDFListPlan, chain: [NSTextBlock]) -> NSAttributedString {
         let out = NSMutableAttributedString()
-        let columns = max(1, t.rows.map(\.count).max() ?? 1)
+        guard !t.rows.isEmpty else { return out }
+        let left = max(0, UDFParser.number(t.attrs["LeftIndent"], 0))
+        let right = max(0, UDFParser.number(t.attrs["RightIndent"], 0))
+        let tableWidth = max(40, width - left - right)
+        let tableSpans = spans(t.attrs["columnSpans"])
+
+        let fractions: [[CGFloat]] = t.rows.map { row in
+            let count = max(1, row.cells.count)
+            var ratios = spans(row.attrs["columnSpans"])
+            if ratios.count != count { ratios = tableSpans.count == count ? tableSpans : Array(repeating: 1, count: count) }
+            let total = ratios.reduce(0, +)
+            return ratios.map { $0 / total }
+        }
+        let scale: CGFloat = 10_000
+        var boundaries: Set<Int> = [0, Int(scale)]
+        for row in fractions {
+            var sum: CGFloat = 0
+            for f in row { sum += f; boundaries.insert(Int((sum * scale).rounded())) }
+        }
+        let grid = boundaries.sorted()
+        let columnWidths = zip(grid, grid.dropFirst()).map { CGFloat($1 - $0) / scale * tableWidth }
+
         let table = NSTextTable()
-        table.numberOfColumns = columns
+        table.numberOfColumns = max(1, columnWidths.count)
         table.layoutAlgorithm = .fixedLayoutAlgorithm
         table.collapsesBorders = true
-
-        var spans = (t.attrs["columnSpans"] ?? "").split(separator: ",").compactMap { Double($0).map { CGFloat($0) } }
-        if spans.count != columns { spans = Array(repeating: width / CGFloat(columns), count: columns) }
-        let total = spans.reduce(0, +)
-        if total > width { spans = spans.map { $0 * width / total } }
-        let bordered = (t.attrs["border"] ?? "borderNone") != "borderNone"
+        if left > 0 { table.setWidth(left, type: .absoluteValueType, for: .margin, edge: .minX) }
+        let border = t.attrs["border"] ?? "borderCell"
+        let lastRow = t.rows.count - 1
 
         for (r, row) in t.rows.enumerated() {
-            for c in 0..<columns {
-                let block = NSTextTableBlock(table: table, startingRow: r, rowSpan: 1, startingColumn: c, columnSpan: 1)
-                block.setValue(spans[c], type: .absoluteValueType, for: .width)
+            var sum: CGFloat = 0
+            for (c, cell) in row.cells.enumerated() {
+                let startIndex = grid.firstIndex(of: Int((sum * scale).rounded())) ?? 0
+                sum += c < fractions[r].count ? fractions[r][c] : 0
+                let endIndex = max(startIndex + 1, grid.firstIndex(of: Int((sum * scale).rounded())) ?? grid.count - 1)
+                let block = NSTextTableBlock(table: table, startingRow: r, rowSpan: 1, startingColumn: startIndex, columnSpan: endIndex - startIndex)
+                block.setValue(columnWidths[startIndex..<endIndex].reduce(0, +), type: .absoluteValueType, for: .width)
                 block.setWidth(1, type: .absoluteValueType, for: .padding)
-                if bordered {
-                    block.setWidth(0.5, type: .absoluteValueType, for: .border)
-                    block.setBorderColor(.black)
+                block.setBorderColor(.black)
+                let edges: [(NSRectEdge, Bool)] = [
+                    (.minY, border == "borderCell" || border == "borderRow" || (border == "borderTable" && r == 0)),
+                    (.maxY, border == "borderCell" || border == "borderRow" || (border == "borderTable" && r == lastRow)),
+                    (.minX, border == "borderCell" || ((border == "borderTable" || border == "borderRow") && startIndex == 0)),
+                    (.maxX, border == "borderCell" || ((border == "borderTable" || border == "borderRow") && endIndex == grid.count - 1)),
+                ]
+                for (edge, on) in edges where on {
+                    block.setWidth(0.5, type: .absoluteValueType, for: .border, edge: edge)
                 }
-                let paragraphs = c < row.count ? row[c] : []
-                if paragraphs.isEmpty {
+                let inner = chain + [block]
+                if cell.isEmpty {
                     let style = NSMutableParagraphStyle()
-                    style.textBlocks = [block]
+                    style.textBlocks = inner
                     out.append(NSAttributedString(string: "\n", attributes: [.paragraphStyle: style, .font: font([:])]))
-                }
-                for p in paragraphs {
-                    out.append(paragraph(p, doc: doc, width: spans[c], counter: &counter, block: block))
+                } else {
+                    out.append(attributed(cell, doc: doc, width: columnWidths[startIndex..<endIndex].reduce(0, +), lists: &lists, chain: inner))
                 }
             }
         }
         return out
+    }
+}
+
+/// Draws tab leaders (dots, dashes, lines) that TextKit has no native support for.
+final class UDFLayoutManager: NSLayoutManager {
+    override func drawGlyphs(forGlyphRange glyphsToShow: NSRange, at origin: CGPoint) {
+        super.drawGlyphs(forGlyphRange: glyphsToShow, at: origin)
+        guard let storage = textStorage, let ctx = NSGraphicsContext.current?.cgContext else { return }
+        let text = storage.string as NSString
+        let chars = characterRange(forGlyphRange: glyphsToShow, actualGlyphRange: nil)
+        var cursor = chars.location
+        while cursor < NSMaxRange(chars) {
+            let found = text.range(of: "\t", options: [], range: NSRange(location: cursor, length: NSMaxRange(chars) - cursor))
+            guard found.location != NSNotFound else { break }
+            cursor = NSMaxRange(found)
+            guard let leaders = storage.attribute(.udfTabLeaders, at: found.location, effectiveRange: nil) as? [CGFloat: Int] else { continue }
+            let glyph = glyphIndexForCharacter(at: found.location)
+            var lineRange = NSRange()
+            let line = lineFragmentRect(forGlyphAt: glyph, effectiveRange: &lineRange)
+            guard glyph + 1 < NSMaxRange(lineRange) else { continue }
+            let start = location(forGlyphAt: glyph)
+            let end = location(forGlyphAt: glyph + 1).x
+            guard let stop = leaders.keys.filter({ $0 > start.x + 0.5 }).min(), let kind = leaders[stop], kind != 0, end - start.x > 4 else { continue }
+            let color = (storage.attribute(.foregroundColor, at: found.location, effectiveRange: nil) as? NSColor) ?? .black
+            let y = origin.y + line.minY + start.y
+            ctx.saveGState()
+            ctx.setStrokeColor(color.cgColor)
+            switch kind {
+            case 1: ctx.setLineWidth(1); ctx.setLineCap(.round); ctx.setLineDash(phase: 0, lengths: [0.01, 3])
+            case 2: ctx.setLineWidth(0.7); ctx.setLineDash(phase: 0, lengths: [3, 2])
+            case 4: ctx.setLineWidth(1.6)
+            default: ctx.setLineWidth(0.6)
+            }
+            let baseline = kind == 1 ? y - 0.5 : y + 1.5
+            ctx.move(to: CGPoint(x: origin.x + line.minX + start.x + 1.5, y: baseline))
+            ctx.addLine(to: CGPoint(x: origin.x + line.minX + end - 1.5, y: baseline))
+            ctx.strokePath()
+            ctx.restoreGState()
+        }
     }
 }
 
@@ -448,7 +662,7 @@ enum UDFTypesetter {
 enum UDFRenderer {
     private final class Flow {
         let storage: NSTextStorage
-        let layout = NSLayoutManager()
+        let layout = UDFLayoutManager()
         init(_ text: NSAttributedString) {
             storage = NSTextStorage(attributedString: text)
             storage.addLayoutManager(layout)
@@ -549,9 +763,11 @@ enum UDFRenderer {
         let current = n.start + page
         var text = n.leading + "\(current)"
         if n.showTotal { text += n.separator + "\(n.start + total - 1)" }
+        text += n.trailing
         let style = NSMutableParagraphStyle()
         style.alignment = n.alignment
-        let attrs: [NSAttributedString.Key: Any] = [.font: n.font, .foregroundColor: n.color, .paragraphStyle: style]
+        var attrs: [NSAttributedString.Key: Any] = [.font: n.font, .foregroundColor: n.color, .paragraphStyle: style]
+        if n.underline { attrs[.underlineStyle] = NSUnderlineStyle.single.rawValue }
         let height = (text as NSString).size(withAttributes: attrs).height
         let y = top ? rect.minY : rect.maxY - height
         (text as NSString).draw(in: CGRect(x: rect.minX, y: y, width: rect.width, height: height), withAttributes: attrs)

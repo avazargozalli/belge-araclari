@@ -59,6 +59,10 @@ UDF, UYAP Doküman Editörü'nün biçimidir: içinde tüm metin ve her metin pa
 
 Satır kırılımları iki platformda ve UYAP'ta yazı tipi ölçümü farkından dolayı birkaç kelime kayabilir; içerik ve biçim aynı kalır.
 
+Desteklenen UDF özellikleri: yazı tipi, boyut, kalın/italik/altı ve üstü çizili, yazı ve zemin rengi, hizalama, girintiler (asılı girinti dahil), satır aralığı, paragraf boşlukları, sekme durakları (sola/sağa/ortaya/ondalık hizalı; noktalı, tireli ve çizgili dolgular), çok düzeyli numaralı ve madde işaretli listeler (Türk alfabesiyle harfli, Roma rakamlı, `NumberSetted` ile devam eden), satır bazında birleştirilmiş hücreli ve iç içe tablolar ile kenarlık türleri, satır içi resimler, antetli kağıt, üst/alt bilgi ve sayfa numaraları.
+
+**Teşekkür:** UYAP Doküman Editörü'nün bazı öznitelikleri nasıl yorumladığına dair bilgiler (sayfa numarası bitleri, alt düzey liste biçimleri, harfli listelerin Türk alfabesiyle sayılması, tablo sütun oranları ve kenarlık türleri, sekme dolguları), Av. Arb. Mevlana İbrahim Asım Bilir'in [UDF Çevirici](https://github.com/miasimbilir/udf-cevirici) projesinin belgelerinden öğrenilmiştir. O projenin kodu kullanılmamıştır; uygulama bu bilgilerle bağımsız olarak yazılmıştır.
+
 ### PDF küçültme nasıl çalışır?
 
 Uygulama birkaç yerel yöntemi dener ve **en küçük geçerli sonucu** seçer:

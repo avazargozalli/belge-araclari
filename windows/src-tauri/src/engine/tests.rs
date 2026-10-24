@@ -431,18 +431,25 @@ fn udf_parses_page_letterhead_and_structure() {
     let body = super::udf::body_html(&doc);
     assert!(body.contains("ÖRNEK ASLİYE HUKUK MAHKEMESİNE"), "Turkish text decoded from UTF-16 offsets");
     assert!(body.contains("font-weight:700") && body.contains("text-decoration:underline"));
-    assert!(body.contains("data-tabs=\"90.00\""), "TabSet becomes a tab stop");
+    assert!(body.contains("data-tabs=\"90.00:0:0\""), "TabSet becomes a tab stop");
+    assert!(body.contains("data-tabs=\"300.00:1:1\""), "right-aligned stop with dotted leader");
     assert!(body.contains("padding-left:96.00pt"), "Hanging indent for wrapped lines");
-    assert!(body.contains("<span>1.</span>") && body.contains("<span>3.</span>"), "numbered list labels");
-    assert!(body.contains("<table") && body.contains("border:0.5pt solid #000"));
+    for label in [">1.</span>", ">3.</span>", ">a.</span>", ">ç.</span>", ">I.</span>", ">5-</span>", ">\u{2022}</span>"] {
+        assert!(body.contains(label), "list label {label}");
+    }
+    assert!(!body.contains(">4.</span>"), "level-2 items do not advance level 1");
+    assert!(body.contains("background-color:#ffff00"), "text background colour");
+    assert!(body.contains("colspan=\"2\""), "row-level columnSpans merge cells on the shared grid");
+    assert!(body.contains("border-left:none") && body.contains("border-top:0.5pt solid #000"), "borderRow draws row lines only");
+    assert!(body.matches("<table").count() == 2, "nested table");
     assert!(body.contains("color:#c00000"), "Java ARGB colour");
     assert!(body.contains("text-align:justify") && body.contains("line-height:1.3225"));
     assert!(body.contains("location.hash='ready='"));
 
     let deco = super::udf::decoration_html(&doc, 3);
     assert_eq!(deco.matches("<div class=\"pg\">").count(), 3);
-    assert!(deco.contains("Sayfa 1/3") && deco.contains("Sayfa 3/3"), "page numbers with total");
-    assert!(deco.contains("text-align:right"));
+    assert!(deco.contains("Sayfa 1/3 .") && deco.contains("Sayfa 3/3 ."), "page numbers with total and suffix");
+    assert!(deco.contains("text-align:center"), "BSP32 bit 32 centres the number");
     assert_eq!(deco.matches("class=\"bg\"").count(), 3, "letterhead on every page");
 }
 
@@ -452,6 +459,17 @@ fn udf_rejects_non_udf_files() {
     let fake = dir.path("sahte.udf");
     std::fs::write(&fake, b"not a zip").unwrap();
     assert!(super::udf::parse_file(&fake).is_err());
+}
+
+#[test]
+fn udf_list_labels_follow_editor_rules() {
+    use super::udf::tests_support::label;
+    assert_eq!(label("NUMBER_TYPE_CHAR_SMALL_DOT", 4), "ç.");
+    assert_eq!(label("NUMBER_TYPE_CHAR_BIG_DOT", 30), "AA.");
+    assert_eq!(label("NUMBER_TYPE_ROMAN_SMALL_D_PARANTHESE", 4), "(iv)");
+    assert_eq!(label("NUMBER_TYPE_NUMBER_PARANTHESE", 2), "2)");
+    assert_eq!(label("NUMBER_TYPE_NUMBER_TRE", 5), "5-");
+    assert_eq!(label("BULLET_TYPE_RECTANGLE", 1), "\u{25AA}");
 }
 
 #[test]

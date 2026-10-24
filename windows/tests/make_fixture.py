@@ -45,14 +45,25 @@ body = [
 ]
 for i in range(1, 4):
     body.append(para([run(f'Talep {i}\n')], Numbered='true', NumberType='NUMBER_TYPE_NUMBER_DOT', ListId='1', ListLevel='1', LeftIndent='18.0', Hanging='18.0'))
+    if i == 2:
+        # Level 2 without SecListTypeLevel2 -> editor default "a."; four items reach "ç".
+        for j in range(4):
+            body.append(para([run(f'Alt madde {j + 1}\n')], Numbered='true', NumberType='NUMBER_TYPE_NUMBER_DOT', ListId='1', ListLevel='2', LeftIndent='36.0', Hanging='18.0'))
+        body.append(para([run('Roma rakamlı alt madde\n')], Numbered='true', ListId='1', ListLevel='3', SecListTypeLevel3='NUMBER_TYPE_ROMAN_BIG_DOT', LeftIndent='54.0', Hanging='18.0'))
+body.append(para([run('Beşten devam eden madde\n')], Numbered='true', NumberType='NUMBER_TYPE_NUMBER_TRE', ListId='2', ListLevel='1', NumberSetted='4', LeftIndent='18.0', Hanging='18.0'))
+body.append(para([run('Madde işaretli satır\n')], Bulleted='true', BulletType='BULLET_TYPE_ELLIPSE', ListId='3', ListLevel='1', LeftIndent='18.0', Hanging='18.0'))
+body.append(para([run('İçindekiler\t'), run('7\n')], TabSet='300.0:1:1'))
+body.append(para([run('Vurgulu satır', background='-256'), run(' ve üstü çizili ', strikethrough='true'), run('metin.\n')]))
 lorem = ('Bu paragraf, UDF dönüştürücüsünün iki yana yaslanmış metni, satır aralığını ve sayfa geçişlerini '
          'doğru işlediğini sınamak için yazılmış örnek bir metindir. Türkçe karakterler: ğüşıöç ĞÜŞİÖÇ. ')
-for i in range(14):
+for i in range(12):
     body.append(para([run(lorem * 2 + '\n')], Alignment='3', FirstLineIndent='35.0', LineSpacing='0.15', SpaceBelow='6.0'))
 body.append(para([run('Kırmızı uyarı satırı.\n', foreground='-4194304', italic='true')], Alignment='0'))
-table = '<table columnSpans="150,150,210" border="borderCell"><row rowType="dataRow">' + ''.join(
-    f'<cell>{para([run(t)])}</cell>' for t in ['Sıra\n', 'Belge\n', 'Açıklama\n']) + '</row><row rowType="dataRow">' + ''.join(
-    f'<cell>{para([run(t)])}</cell>' for t in ['1\n', 'Ek-1\n', 'Tablo hücresi metni\n']) + '</row></table>'
+inner = '<table border="borderCell"><row><cell>' + para([run('İç A\n')]) + '</cell><cell>' + para([run('İç B\n')]) + '</cell></row></table>'
+table = ('<table columnSpans="1,1,2" border="borderRow"><row rowType="dataRow">' + ''.join(
+    f'<cell>{para([run(t)])}</cell>' for t in ['Sıra\n', 'Belge\n', 'Açıklama\n']) + '</row>'
+    '<row rowType="dataRow">' + ''.join(f'<cell>{para([run(t)])}</cell>' for t in ['1\n', 'Ek-1\n', 'Tablo hücresi metni\n']) + '</row>'
+    '<row rowType="dataRow" columnSpans="1,3"><cell>' + para([run('2\n')]) + '</cell><cell>' + para([run('Birleştirilmiş hücre\n')]) + inner + '</cell></row></table>')
 body.append(table)
 s, l = add('¸')
 body.append(f'<paragraph Alignment="2"><image width="24.0" height="24.0" imageData="{base64.b64encode(badge).decode()}" startOffset="{s}" length="{l}" />{run(chr(10))}</paragraph>')
@@ -63,7 +74,7 @@ xml = f'''<?xml version="1.0" encoding="UTF-8" ?>
 <template format_id="1.8" >
 <content><![CDATA[{''.join(parts)}]]></content><properties><pageFormat mediaSizeName="1" leftMargin="42.5" rightMargin="42.5" topMargin="42.5" bottomMargin="42.5" paperOrientation="1" headerFOffset="20.0" footerFOffset="20.0" /><bgImage bgImageSource="" bgImageData="{base64.b64encode(letterhead).decode()}" bgImageBottomMargin="0" bgImageUpMargin="0" bgImageRigtMargin="0" bgImageLeftMargin="0" /></properties>
 <elements resolver="hvl-default" >
-<header>{header}</header>{''.join(body)}<footer pageNumber-spec="BSP32_2088" pageNumber-seperator="/" pageNumber-fontFace="Arial" pageNumber-fontSize="10" pageNumber-color="-16777216" pageNumber-foreStr="Sayfa " pageNumber-pageStartNumStr="">{footer}</footer>
+<header>{header}</header>{''.join(body)}<footer pageNumber-spec="BSP32_2088" pageNumber-afterStr=" ." pageNumber-seperator="/" pageNumber-fontFace="Arial" pageNumber-fontSize="10" pageNumber-color="-16777216" pageNumber-foreStr="Sayfa " pageNumber-pageStartNumStr="">{footer}</footer>
 </elements>
 <styles><style name="default" description="Geçerli" family="Lucida Grande" size="13" bold="false" italic="false" foreground="-16777216" /><style name="hvl-default" family="Times New Roman" size="12" description="Gövde" /></styles>
 </template>'''
