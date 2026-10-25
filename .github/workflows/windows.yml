@@ -3,9 +3,9 @@ name: Windows
 on:
   push:
     branches: [main]
-    paths: ['windows/**', '.github/workflows/windows.yml']
+    paths: ['windows/**', 'core/**', '.github/workflows/windows.yml']
   pull_request:
-    paths: ['windows/**', '.github/workflows/windows.yml']
+    paths: ['windows/**', 'core/**', '.github/workflows/windows.yml']
   workflow_dispatch:
   release:
     types: [published]
@@ -57,6 +57,9 @@ jobs:
 
       - name: Audit JavaScript dependencies
         run: npm audit --audit-level=high
+
+      - name: Shared core tests (UDF reader, Word writer)
+        run: cargo test --release --manifest-path ../core/Cargo.toml --locked
 
       - name: Engine tests
         run: cargo test --release --manifest-path src-tauri/Cargo.toml --locked
@@ -126,12 +129,47 @@ jobs:
           print("UDF conversion content: passed")
           EOF
 
+      - name: Convert sample UDF to Word with the installed app
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $destination = Join-Path $env:RUNNER_TEMP 'belge-araclari'
+          $exe = Get-ChildItem "$destination/*.exe" | Where-Object { $_.Name -notmatch 'uninstall' } | Select-Object -First 1
+          $udf = (Resolve-Path 'tests/fixtures/ornek-dilekce.udf').Path
+          $out = Join-Path $env:RUNNER_TEMP 'udf-check/ornek-dilekce.docx'
+          $process = Start-Process -FilePath $exe.FullName -ArgumentList @('--udf-to-docx', "`"$udf`"", "`"$out`"") -PassThru
+          if (-not $process.WaitForExit(60000)) { Stop-Process -Id $process.Id -Force; throw 'Word conversion timed out' }
+          if ($process.ExitCode -ne 0) { throw "Word conversion failed with exit code $($process.ExitCode)" }
+          if (-not (Test-Path $out)) { throw 'Word conversion produced no file' }
+          Write-Output "UDF → Word: $((Get-Item $out).Length) bytes"
+
+      - name: Check converted Word content
+        env:
+          PYTHONIOENCODING: utf-8
+        run: |
+          python - "$RUNNER_TEMP/udf-check/ornek-dilekce.docx" <<'EOF'
+          import sys, zipfile
+          from xml.dom import minidom
+          docx = zipfile.ZipFile(sys.argv[1])
+          for name in docx.namelist():
+              if name.endswith((".xml", ".rels")):
+                  minidom.parseString(docx.read(name))
+          document = docx.read("word/document.xml").decode("utf-8")
+          assert "MAHKEMES" in document, "body text missing"
+          assert "Tablo hücresi metni" in document, "table text missing"
+          assert 'behindDoc="1"' in docx.read("word/header1.xml").decode("utf-8"), "letterhead missing"
+          assert " PAGE " in docx.read("word/footer1.xml").decode("utf-8"), "page number field missing"
+          print("UDF → Word content: passed")
+          EOF
+
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
           name: udf-sample-output
           retention-days: 7
-          path: ${{ runner.temp }}/udf-check/*.pdf
+          path: |
+            ${{ runner.temp }}/udf-check/*.pdf
+            ${{ runner.temp }}/udf-check/*.docx
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:

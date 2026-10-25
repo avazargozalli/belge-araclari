@@ -253,14 +253,13 @@ checksum = "ac07cdecf99051d9a5238b80f35af32cdeba5b336e55d957b318b50137e18da5"
 
 [[package]]
 name = "belge-araclari"
-version = "1.2.1"
+version = "1.3.0"
 dependencies = [
- "base64 0.22.1",
+ "belge-core",
  "getrandom 0.3.4",
  "image",
  "lopdf",
  "rayon",
- "roxmltree",
  "serde",
  "serde_json",
  "tauri",
@@ -271,6 +270,14 @@ dependencies = [
  "tiff",
  "webview2-com",
  "windows",
+]
+
+[[package]]
+name = "belge-core"
+version = "1.3.0"
+dependencies = [
+ "base64 0.22.1",
+ "roxmltree",
  "zip",
 ]
 

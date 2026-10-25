@@ -111,11 +111,13 @@ struct ImagesView: View {
     }
 }
 
-// MARK: - UDF → PDF
+// MARK: - UDF → PDF / Word
 
 struct UDFView: View {
     @Bindable var model: UDFModel
     private let tool = Tool.udfToPDF
+    private var word: Bool { model.format == .docx }
+    private var kind: String { word ? "Word" : "PDF" }
 
     var body: some View {
         ToolPage(tool: tool) {
@@ -125,10 +127,17 @@ struct UDFView: View {
 
             VStack(alignment: .leading, spacing: 16) {
                 SectionTitle(text: "Çıktı")
+                OptionRow(label: "Biçim") {
+                    Picker("Biçim", selection: $model.format) {
+                        Text("PDF").tag(UDFModel.Format.pdf)
+                        Text("Word (.docx)").tag(UDFModel.Format.docx)
+                    }
+                    .pickerStyle(.segmented).labelsHidden().frame(maxWidth: 260)
+                }
                 Toggle(isOn: $model.merge) {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("Tek PDF'te birleştir").fontWeight(.medium)
-                        Text(model.merge ? "Tüm UDF'ler listedeki sırayla tek bir PDF dosyası olur." : "Her UDF için ayrı bir PDF oluşturulur.")
+                        Text("Tek \(kind) dosyasında birleştir").fontWeight(.medium)
+                        Text(model.merge ? "Tüm UDF'ler listedeki sırayla tek bir \(kind) dosyası olur." : "Her UDF için ayrı bir \(kind) dosyası oluşturulur.")
                             .font(.caption).foregroundStyle(.secondary)
                     }
                 }
@@ -140,16 +149,18 @@ struct UDFView: View {
                     OptionRow(label: "Dosya adı") {
                         TextField(model.store.files.first.map { Output.baseName($0.url) } ?? "Belge", text: $model.outputName)
                             .textFieldStyle(.roundedBorder).frame(maxWidth: 300)
-                        Text(".pdf").foregroundStyle(.secondary)
+                        Text(word ? ".docx" : ".pdf").foregroundStyle(.secondary)
                     }
                 }
-                Banner(text: "Yazı tipi, kalın/italik/altı çizili metin, hizalama, girintiler, sekmeler, tablolar, antetli kağıt (arka plan), üst/alt bilgi ve sayfa numaraları korunur. Metin PDF'te seçilebilir kalır.")
+                Banner(text: word
+                       ? "Word'de düzenlenebilir belge oluşur: yazı tipleri, hizalama, girintiler, sekmeler, tablolar, resimler, üst/alt bilgi ve canlı sayfa numaraları korunur; antet her sayfada metnin arkasında durur. Liste numaraları UYAP'taki gibi (a, b, c, ç…) metin olarak yazılır. Satır kırılımları Word'ün yazı ölçülerine göre biraz değişebilir."
+                       : "Yazı tipi, kalın/italik/altı çizili metin, hizalama, girintiler, sekmeler, tablolar, antetli kağıt (arka plan), üst/alt bilgi ve sayfa numaraları korunur. Metin PDF'te seçilebilir kalır.")
             }
             .card()
 
             ResultsView(job: model.job, tint: tool.tint)
         } bar: {
-            ActionBar(job: model.job, tool: tool, title: model.merge && model.store.files.count > 1 ? "Birleştir ve PDF Yap" : "PDF'e Çevir",
+            ActionBar(job: model.job, tool: tool, title: model.merge && model.store.files.count > 1 ? "Birleştir ve \(kind) Yap" : "\(word ? "Word'e" : "PDF'e") Çevir",
                       info: model.store.files.isEmpty ? "UDF ekleyin" : "\(model.store.files.count) UDF",
                       disabled: model.store.files.isEmpty, action: model.start)
         }

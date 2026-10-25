@@ -15,6 +15,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use engine::compress::{self, Level};
 use engine::images::{self, ImageOptions};
 use engine::ops::{self, SplitMode};
+use engine::udf;
 use engine::output::{base_name, directory_for, unique_file, unique_folder};
 use engine::{file_name, file_size, EngineError};
 
@@ -412,12 +413,68 @@ async fn udf_to_pdf(app: AppHandle, job: String, paths: Vec<String>, merge: bool
         .collect())
 }
 
+// MARK: - UDF → Word
+
+#[tauri::command]
+async fn udf_to_docx(app: AppHandle, job: String, paths: Vec<String>, merge: bool, name: String, out_dir: Option<String>) -> CmdResult<Vec<ResultItem>> {
+    blocking(move || {
+        let inputs: Vec<PathBuf> = paths.iter().map(PathBuf::from).collect();
+        let chosen = chosen_dir(&out_dir);
+        let progress = reporter(&app, &job);
+        let detail = |path: &Path, count: usize| {
+            let size = human_size(file_size(path));
+            if count > 1 { format!("{count} UDF · Word belgesi · {size}") } else { format!("Word belgesi · {size}") }
+        };
+        if merge && inputs.len() > 1 {
+            let first = &inputs[0];
+            let base = if name.trim().is_empty() { base_name(first) } else { name.trim().to_string() };
+            let out = unique_file(&directory_for(first, chosen.as_deref()), &base, "docx");
+            progress(0.0, "Word belgesi oluşturuluyor");
+            return vec![match udf::docx::convert(&inputs, &out) {
+                Ok(()) => ResultItem::ok(&out, detail(&out, inputs.len())),
+                Err(e) => ResultItem::failed(file_name(&out), e),
+            }];
+        }
+        inputs
+            .iter()
+            .enumerate()
+            .map(|(i, input)| {
+                progress(i as f64 / inputs.len() as f64, &file_name(input));
+                let out = unique_file(&directory_for(input, chosen.as_deref()), &base_name(input), "docx");
+                match udf::docx::convert(std::slice::from_ref(input), &out) {
+                    Ok(()) => ResultItem::ok(&out, detail(&out, 1)),
+                    Err(e) => ResultItem::failed(file_name(input), e),
+                }
+            })
+            .collect()
+    })
+    .await
+}
+
 /// `BelgeAraclari.exe --udf-to-pdf input.udf output.pdf` converts without showing a window
 /// (used for batch work and by the Windows CI test).
 fn cli_udf_request() -> Option<(PathBuf, PathBuf)> {
     let args: Vec<String> = std::env::args().collect();
     let i = args.iter().position(|a| a == "--udf-to-pdf")?;
     Some((PathBuf::from(args.get(i + 1)?), PathBuf::from(args.get(i + 2)?)))
+}
+
+/// `BelgeAraclari.exe --udf-to-docx input.udf output.docx` writes a Word file and exits; it needs
+/// no window, so it runs before Tauri starts.
+fn cli_docx_request() -> Option<i32> {
+    let args: Vec<String> = std::env::args().collect();
+    let i = args.iter().position(|a| a == "--udf-to-docx")?;
+    let (input, output) = (PathBuf::from(args.get(i + 1)?), PathBuf::from(args.get(i + 2)?));
+    Some(match udf::docx::convert(&[input], &output) {
+        Ok(()) => {
+            println!("Word → {}", output.display());
+            0
+        }
+        Err(e) => {
+            eprintln!("{e}");
+            1
+        }
+    })
 }
 
 // MARK: - Passwords
@@ -449,6 +506,9 @@ async fn protect(app: AppHandle, job: String, paths: Vec<String>, encrypt: bool,
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    if let Some(code) = cli_docx_request() {
+        std::process::exit(code);
+    }
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
@@ -465,7 +525,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             file_info, read_pdf, thumbnail, open_path, reveal_path, ghostscript, initial_files,
             compress, scan_begin, scan_page, scan_finish, scan_dpi,
-            images_to_pdf, udf_to_pdf, merge, split, organize,
+            images_to_pdf, udf_to_pdf, udf_to_docx, merge, split, organize,
             export_begin, export_page, export_finish, protect
         ])
         .setup(|app| {

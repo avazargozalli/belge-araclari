@@ -11,7 +11,7 @@ enum Tool: String, CaseIterable, Identifiable, Hashable {
         switch self {
         case .compress: return "PDF Küçült"
         case .imagesToPDF: return "Resimden PDF'e"
-        case .udfToPDF: return "UDF'ten PDF'e"
+        case .udfToPDF: return "UDF Dönüştür"
         case .merge: return "PDF Birleştir"
         case .split: return "PDF Böl"
         case .organize: return "Sayfaları Düzenle"
@@ -24,7 +24,7 @@ enum Tool: String, CaseIterable, Identifiable, Hashable {
         switch self {
         case .compress: return "PDF dosyalarını makul kaliteyle sıkıştırın veya daha küçük hale getirin."
         case .imagesToPDF: return "JPG, PNG, WEBP, HEIC ve TIFF resimlerini tek PDF yapın."
-        case .udfToPDF: return "UYAP UDF belgelerini biçimini koruyarak PDF'e çevirin, isterseniz tek PDF'te birleştirin."
+        case .udfToPDF: return "UYAP UDF belgelerini biçimini koruyarak PDF'e veya Word'e çevirin, isterseniz tek dosyada birleştirin."
         case .merge: return "Birden fazla PDF'i istediğiniz sırayla tek dosyada birleştirin."
         case .split: return "Her sayfayı ayrı dosya yapın veya belirli sayfaları çıkarın."
         case .organize: return "Sayfaları döndürün, silin ve sürükleyerek yeniden sıralayın."

@@ -6,5 +6,6 @@ dist/
 windows/node_modules/
 windows/ui/vendor/
 windows/src-tauri/target/
+core/target/
 windows/src-tauri/gen/
 .claude/

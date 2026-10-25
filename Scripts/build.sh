@@ -9,7 +9,7 @@ cd "$ROOT"
 APP_NAME="Belge Araçları"
 EXECUTABLE="BelgeAraclari"
 BUNDLE_ID="com.azargozalli.belgearaclari"
-VERSION="1.2.1"
+VERSION="1.3.0"
 BUILD_NUMBER="1"
 DIST="$ROOT/dist"
 APP="$DIST/$APP_NAME.app"
@@ -18,10 +18,20 @@ echo "▸ Derleniyor (arm64 + x86_64)…"
 swift build -c release --arch arm64 --arch x86_64
 BIN="$(swift build -c release --arch arm64 --arch x86_64 --show-bin-path)/$EXECUTABLE"
 
+echo "▸ Ortak çekirdek (belge-core, Rust) derleniyor…"
+# UDF → Word writer shared with the Windows app. Needs: rustup target add aarch64-apple-darwin x86_64-apple-darwin
+CORE="$ROOT/core"
+for target in aarch64-apple-darwin x86_64-apple-darwin; do
+  MACOSX_DEPLOYMENT_TARGET=14.0 cargo build --release --locked --manifest-path "$CORE/Cargo.toml" --target "$target"
+done
+CORE_BIN="$(mktemp -d)/belge-core"
+lipo -create "$CORE/target/aarch64-apple-darwin/release/belge-core" "$CORE/target/x86_64-apple-darwin/release/belge-core" -output "$CORE_BIN"
+
 echo "▸ Uygulama paketi oluşturuluyor…"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/$EXECUTABLE"
+cp "$CORE_BIN" "$APP/Contents/MacOS/belge-core"
 
 ICON_SRC="$ROOT/Resources/AppIcon.png"
 if [[ ! -f "$ICON_SRC" ]]; then

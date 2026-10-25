@@ -17,8 +17,8 @@ const TOOLS = [
     subtitle: 'PDF dosyalarını makul kaliteyle sıkıştırın veya daha küçük hale getirin.' },
   { id: 'images', icon: 'images', title: "Resimden PDF'e", tint: 'var(--blue)', accepts: 'image',
     subtitle: 'JPG, PNG, WEBP ve TIFF resimlerini tek PDF yapın.' },
-  { id: 'udf', icon: 'udf', title: "UDF'ten PDF'e", tint: 'var(--red)', accepts: 'udf',
-    subtitle: "UYAP UDF belgelerini biçimini koruyarak PDF'e çevirin, isterseniz tek PDF'te birleştirin." },
+  { id: 'udf', icon: 'udf', title: 'UDF Dönüştür', tint: 'var(--red)', accepts: 'udf',
+    subtitle: "UYAP UDF belgelerini biçimini koruyarak PDF'e veya Word'e çevirin, isterseniz tek dosyada birleştirin." },
   { id: 'merge', icon: 'merge', title: 'PDF Birleştir', tint: 'var(--purple)', accepts: 'pdf',
     subtitle: "Birden fazla PDF'i istediğiniz sırayla tek dosyada birleştirin." },
   { id: 'split', icon: 'split', title: 'PDF Böl', tint: 'var(--orange)', accepts: 'pdf', single: true,
@@ -53,7 +53,7 @@ const state = {
   tools: {
     compress: { files: [], level: 'balanced', scan: false, job: newJob() },
     images: { files: [], options: { pageSize: 'a4', orientation: 'auto', margin: 'none', quality: 'balanced' }, name: '', job: newJob() },
-    udf: { files: [], merge: true, name: '', job: newJob() },
+    udf: { files: [], format: 'pdf', merge: true, name: '', job: newJob() },
     merge: { files: [], name: 'Birleştirilmiş belge', job: newJob() },
     split: { files: [], mode: 'each', ranges: '', separate: false, every: 2, job: newJob() },
     organize: { file: null, doc: null, pages: [], selected: new Set(), original: 0, error: null, job: newJob() },
@@ -193,7 +193,7 @@ const actions = {
 
   udf() {
     const t = state.tools.udf;
-    runJob('udf', (job) => invoke('udf_to_pdf', { job: job.id, paths: t.files.map((f) => f.path), merge: t.merge, name: t.name, outDir: outDir() }));
+    runJob('udf', (job) => invoke(t.format === 'docx' ? 'udf_to_docx' : 'udf_to_pdf', { job: job.id, paths: t.files.map((f) => f.path), merge: t.merge, name: t.name, outDir: outDir() }));
   },
 
   images() {
@@ -454,15 +454,20 @@ function toolBody(id) {
     }
     case 'udf': {
       const many = t.files.length > 1;
+      const word = t.format === 'docx';
+      const kind = word ? 'Word' : 'PDF';
       return filePicker(id, { title: 'UDF dosyalarını buraya sürükleyin', text: 'UYAP belgeleri · Birden fazla seçip sırayı sürükleyerek değiştirebilirsiniz', listTitle: 'Belge sırası', sortable: true }) + `
         <div class="card pad">
           <p class="eyebrow">Çıktı</p>
+          <div class="option-row"><span class="label">Biçim</span>${segmented('format', t.format, [['pdf', 'PDF'], ['docx', 'Word (.docx)']])}</div>
           <label class="toggle">
-            <span><strong>Tek PDF'te birleştir</strong><span>${t.merge ? 'Tüm UDF’ler listedeki sırayla tek bir PDF dosyası olur.' : 'Her UDF için ayrı bir PDF oluşturulur.'}</span></span>
+            <span><strong>Tek ${kind} dosyasında birleştir</strong><span>${t.merge ? `Tüm UDF’ler listedeki sırayla tek bir ${kind} dosyası olur.` : `Her UDF için ayrı bir ${kind} dosyası oluşturulur.`}</span></span>
             <span class="switch"><input type="checkbox" data-bind="merge" ${t.merge ? 'checked' : ''} ${many ? '' : 'disabled'}><i></i></span>
           </label>
-          ${t.merge && many ? `<div class="option-row"><label for="f-name">Dosya adı</label><span class="inline"><input id="f-name" class="field" type="text" data-bind="name" value="${esc(t.name)}" placeholder="${esc(baseName(t.files[0].path))}"><span class="muted">.pdf</span></span></div>` : ''}
-          ${banner("Yazı tipi, kalın/italik/altı çizili metin, hizalama, girintiler, sekmeler, tablolar, antetli kağıt (arka plan), üst/alt bilgi ve sayfa numaraları korunur. Metin PDF'te seçilebilir kalır.")}
+          ${t.merge && many ? `<div class="option-row"><label for="f-name">Dosya adı</label><span class="inline"><input id="f-name" class="field" type="text" data-bind="name" value="${esc(t.name)}" placeholder="${esc(baseName(t.files[0].path))}"><span class="muted">.${word ? 'docx' : 'pdf'}</span></span></div>` : ''}
+          ${word
+            ? banner("Word'de düzenlenebilir belge oluşur: yazı tipleri, hizalama, girintiler, sekmeler, tablolar, resimler, üst/alt bilgi ve canlı sayfa numaraları korunur; antet her sayfada metnin arkasında durur. Liste numaraları UYAP'taki gibi (a, b, c, ç…) metin olarak yazılır. Satır kırılımları Word'ün yazı ölçülerine göre biraz değişebilir.")
+            : banner("Yazı tipi, kalın/italik/altı çizili metin, hizalama, girintiler, sekmeler, tablolar, antetli kağıt (arka plan), üst/alt bilgi ve sayfa numaraları korunur. Metin PDF'te seçilebilir kalır.")}
         </div>`;
     }
     case 'images': {
@@ -571,7 +576,7 @@ function actionBarHtml(id) {
   const tool = toolById[id];
   const t = state.tools[id];
   const job = t.job;
-  const label = { compress: 'PDF Küçült', images: 'PDF Oluştur', udf: t.merge && t.files?.length > 1 ? 'Birleştir ve PDF Yap' : "PDF'e Çevir", merge: 'Birleştir', split: 'Böl', organize: 'Kaydet',
+  const label = { compress: 'PDF Küçült', images: 'PDF Oluştur', udf: t.merge && t.files?.length > 1 ? (t.format === 'docx' ? 'Birleştir ve Word Yap' : 'Birleştir ve PDF Yap') : (t.format === 'docx' ? "Word'e Çevir" : "PDF'e Çevir"), merge: 'Birleştir', split: 'Böl', organize: 'Kaydet',
     pdfToImages: 'Görsellere Dönüştür', protect: t.mode === 'encrypt' ? 'Şifrele' : 'Şifreyi Kaldır' }[id];
   let info = '';
   let disabled = false;

@@ -22,8 +22,8 @@
 | PDF Küçült | Resimden PDF'e |
 |---|---|
 | <img src="docs/screenshots/pdf-kucult.webp" alt="PDF Küçült"> | <img src="docs/screenshots/resimden-pdf.webp" alt="Resimden PDF'e"> |
-| **UDF'ten PDF'e** | **PDF Birleştir** |
-| <img src="docs/screenshots/udften-pdf.webp" alt="UDF'ten PDF'e"> | <img src="docs/screenshots/pdf-birlestir.webp" alt="PDF Birleştir"> |
+| **UDF Dönüştür** | **PDF Birleştir** |
+| <img src="docs/screenshots/udften-pdf.webp" alt="UDF Dönüştür"> | <img src="docs/screenshots/pdf-birlestir.webp" alt="PDF Birleştir"> |
 | **PDF Böl** | **Sayfaları Düzenle** |
 | <img src="docs/screenshots/pdf-bol.webp" alt="PDF Böl"> | <img src="docs/screenshots/sayfalari-duzenle.webp" alt="Sayfaları Düzenle"> |
 | **PDF'ten Resme** | **PDF Şifrele** |
@@ -34,7 +34,7 @@
 | Araç | Ne yapar |
 |---|---|
 | **PDF Küçült** | Makul / Daha Küçük / En Küçük seviyeleri. Metin seçilebilir kalır. Taranmış belgeler için ayrıca "taranmış belge modu". Birden fazla dosyayı tek seferde işler. |
-| **UDF'ten PDF'e** | UYAP belgelerini (.udf) biçimini koruyarak PDF'e çevirir. Birden fazla UDF'yi sürükleyerek sıralayıp tek PDF'te birleştirebilirsiniz. Yazı tipi, kalın/italik/altı çizili, hizalama, girintiler, sekmeler, numaralı listeler, tablolar, resimler, antetli kağıt (arka plan), üst/alt bilgi ve sayfa numaraları korunur; metin seçilebilir kalır. |
+| **UDF Dönüştür** | UYAP belgelerini (.udf) biçimini koruyarak **PDF'e veya Word'e (.docx)** çevirir. Birden fazla UDF'yi sürükleyerek sıralayıp tek PDF'te veya tek Word belgesinde birleştirebilirsiniz. Yazı tipi, kalın/italik/altı çizili, hizalama, girintiler, sekmeler, numaralı listeler, tablolar, resimler, antetli kağıt (arka plan), üst/alt bilgi ve sayfa numaraları korunur; metin seçilebilir kalır. |
 | **Resimden PDF'e** | JPG, PNG, WEBP, HEIC, TIFF (çok sayfalı), GIF, BMP → tek PDF. Sayfa boyutu (A4, A5, Letter, Legal, resme göre), yönlendirme, kenar boşluğu ve kalite ayarı. Sürükleyerek sıralama. |
 | **PDF Birleştir** | Birden fazla PDF'i istediğiniz sırayla tek dosyada birleştirir. |
 | **PDF Böl** | Her sayfayı ayrı dosya yapar, `1-3, 5, 8-` gibi sayfaları çıkarır veya her N sayfada böler. |
@@ -60,6 +60,14 @@ UDF, UYAP Doküman Editörü'nün biçimidir: içinde tüm metin ve her metin pa
 Satır kırılımları iki platformda ve UYAP'ta yazı tipi ölçümü farkından dolayı birkaç kelime kayabilir; içerik ve biçim aynı kalır.
 
 Desteklenen UDF özellikleri: yazı tipi, boyut, kalın/italik/altı ve üstü çizili, yazı ve zemin rengi, hizalama, girintiler (asılı girinti dahil), satır aralığı, paragraf boşlukları, sekme durakları (sola/sağa/ortaya/ondalık hizalı; noktalı, tireli ve çizgili dolgular), çok düzeyli numaralı ve madde işaretli listeler (Türk alfabesiyle harfli, Roma rakamlı, `NumberSetted` ile devam eden), satır bazında birleştirilmiş hücreli ve iç içe tablolar ile kenarlık türleri, satır içi resimler, antetli kağıt, üst/alt bilgi ve sayfa numaraları.
+
+#### UDF → Word
+
+Word çıktısı düzenlenebilir bir `.docx` belgesidir ve Microsoft Word, Pages ve LibreOffice'te açılır. Sayfa boyutu ve kenar boşlukları, yazı tipleri, hizalama, girintiler, sekmeler ve dolguları, tablolar (birleştirilmiş hücreler dahil), resimler ve üst/alt bilgi korunur. Antet her sayfada metnin arkasında durur; sayfa numaraları Word'ün canlı alanlarıdır (SAYFA / TOPLAM). Birleştirilen her UDF, kendi sayfa düzeni ve numaralandırmasıyla ayrı bir Word bölümü olur.
+
+Liste numaraları UYAP'taki gibi metin olarak yazılır: Word'ün harfli numaralandırması İngiliz alfabesini kullanır (a, b, c, d), UYAP ise Türk alfabesini (a, b, c, ç). Satır kırılımları Word'ün yazı ölçülerine göre biraz değişebilir.
+
+Word yazıcısı her iki platformun ortak kullandığı Rust çekirdeğindedir (`core/`): Windows sürümü bunu doğrudan içerir, macOS sürümü ise uygulama paketinde `belge-core` adlı küçük bir komut satırı aracı olarak taşır.
 
 **Teşekkür:** UYAP Doküman Editörü'nün bazı öznitelikleri nasıl yorumladığına dair bilgiler (sayfa numarası bitleri, alt düzey liste biçimleri, harfli listelerin Türk alfabesiyle sayılması, tablo sütun oranları ve kenarlık türleri, sekme dolguları), Av. Arb. Mevlana İbrahim Asım Bilir'in [UDF Çevirici](https://github.com/miasimbilir/udf-cevirici) projesinin belgelerinden öğrenilmiştir. O projenin kodu kullanılmamıştır; uygulama bu bilgilerle bağımsız olarak yazılmıştır.
 
@@ -96,7 +104,7 @@ Uygulama arayüz için Windows'ta yerleşik olan Microsoft Edge WebView2'yi kull
 
 ## Kaynaktan derleme
 
-Xcode Komut Satırı Araçları (Swift 5.10 veya üzeri) gerekir.
+Xcode Komut Satırı Araçları (Swift 5.10 veya üzeri) ve Rust gerekir (Word dönüştürücüsü için; bir kez `rustup target add aarch64-apple-darwin x86_64-apple-darwin`).
 
 ```bash
 git clone https://github.com/avazargozalli/belge-araclari.git
@@ -114,6 +122,7 @@ Node.js 22+ ve Rust (stable) gerekir. Windows kurulum dosyası her `main` günce
 ```bash
 cd windows
 npm ci
+cargo test --manifest-path ../core/Cargo.toml       # UDF okuyucu ve Word yazıcısı testleri
 cargo test --manifest-path src-tauri/Cargo.toml   # PDF motoru testleri (her platformda çalışır)
 npm run build                                      # Windows'ta: kurulum dosyası üretir
 ```
@@ -129,11 +138,14 @@ Sources/BelgeAraclari/
     PDFEngine.swift          Birleştir, böl, render, şifrele
     Support.swift            Dosya, çıktı ve görsel yardımcıları
     UDF.swift                UDF okuma ve TextKit ile PDF'e dizme
+    UDFWord.swift            UDF → Word (paketteki belge-core aracını çalıştırır)
   Models/                    Uygulama durumu ve araç modelleri
   Views/                     SwiftUI arayüzü
 Scripts/
   build.sh                   .app + .dmg paketleme
   make_icon.swift            Uygulama ikonunu çizer
+core/                        Ortak Rust çekirdeği: UDF okuyucu, HTML ve Word (.docx) yazıcıları
+  src/udf/docx.rs            UDF → Word
 windows/                     Windows sürümü (Tauri 2)
   src-tauri/src/engine/      PDF motoru (Rust, lopdf): küçült, resimden PDF, UDF, birleştir, böl, şifrele
   src-tauri/src/udf_print.rs UDF'yi WebView2 ile PDF'e yazdırma

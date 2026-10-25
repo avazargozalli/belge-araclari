@@ -67,8 +67,11 @@ final class ImagesModel {
 @MainActor
 @Observable
 final class UDFModel {
+    enum Format: String, CaseIterable { case pdf, docx }
+
     let store = FileStore(kind: .udf)
     let job = Job()
+    var format = Format.pdf
     var merge = true
     var outputName = ""
 
@@ -76,8 +79,12 @@ final class UDFModel {
         let urls = store.files.map(\.url)
         let merge = merge && urls.count > 1
         let name = outputName
+        let format = format
         job.run { progress in
-            try UDFRenderer.convert(urls, merge: merge, mergedName: name, progress: progress)
+            switch format {
+            case .pdf: try UDFRenderer.convert(urls, merge: merge, mergedName: name, progress: progress)
+            case .docx: try UDFWord.convert(urls, merge: merge, mergedName: name, progress: progress)
+            }
         }
     }
 }
