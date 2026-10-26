@@ -1,6 +1,7 @@
 //! Belge Araçları for Windows — Tauri shell around the local PDF engine.
 //! No command here performs network access; files are only read from and written to disk.
 
+mod convert;
 pub mod engine;
 mod udf_print;
 
@@ -124,7 +125,7 @@ async fn file_info(paths: Vec<String>, sessions: State<'_, Sessions>) -> CmdResu
                 vec![p]
             }
         })
-        .filter(|p| is_pdf(p) || is_udf(p) || images::is_supported(p))
+        .filter(|p| is_pdf(p) || is_udf(p) || images::is_supported(p) || belge_core::office::is_office(p))
         .collect();
     {
         let mut allowed = sessions.allowed_reads.lock().unwrap();
@@ -140,6 +141,8 @@ async fn file_info(paths: Vec<String>, sessions: State<'_, Sessions>) -> CmdResu
                     (pages, locked, "pdf")
                 } else if is_udf(&p) {
                     (0, false, "udf")
+                } else if belge_core::office::is_office(&p) {
+                    (0, false, "office")
                 } else {
                     (tiff_pages(&p), false, "image")
                 };
@@ -451,11 +454,47 @@ async fn udf_to_docx(app: AppHandle, job: String, paths: Vec<String>, merge: boo
     .await
 }
 
+// MARK: - Any file → PDF
+
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+async fn convert_to_pdf(app: AppHandle, job: String, paths: Vec<String>, merge: bool, name: String, image_page: images::PageSize, use_office: bool, out_dir: Option<String>) -> CmdResult<Vec<ResultItem>> {
+    let inputs: Vec<PathBuf> = paths.iter().map(PathBuf::from).collect();
+    let first = inputs.first().ok_or("Dosya yok")?.clone();
+    let merge = merge && inputs.len() > 1;
+    let chosen = chosen_dir(&out_dir);
+    let base = if name.trim().is_empty() { base_name(&first) } else { name.trim().to_string() };
+    let merged = unique_file(&directory_for(&first, chosen.as_deref()), &base, "pdf");
+    let progress = reporter(&app, &job);
+    let results = convert::convert_many(&app, &inputs, merge, &merged, |p| directory_for(p, chosen.as_deref()), image_page, use_office, &progress).await;
+    Ok(results
+        .into_iter()
+        .map(|r| match r {
+            convert::Outcome::Made(path, pages, how) => {
+                let mut detail = format!("{pages} sayfa · {}", human_size(file_size(&path)));
+                if let Some(how) = how {
+                    detail = if merge && path == merged { format!("{how} · {detail}") } else { format!("{detail} · {how}") };
+                }
+                ResultItem::ok(&path, detail)
+            }
+            convert::Outcome::Kept(path) => ResultItem::ok(&path, "Zaten PDF; olduğu gibi bırakıldı.".into()),
+            convert::Outcome::Failed(title, detail) => ResultItem::failed(title, detail),
+        })
+        .collect())
+}
+
+/// Office suites found on this computer, for the settings dialog.
+#[tauri::command]
+async fn office_engines() -> CmdResult<Vec<String>> {
+    blocking(|| belge_core::office::installed().into_iter().map(String::from).collect()).await
+}
+
 /// `BelgeAraclari.exe --udf-to-pdf input.udf output.pdf` converts without showing a window
 /// (used for batch work and by the Windows CI test).
+/// `--to-pdf input output.pdf` does the same for any supported file (Word, Excel, images…).
 fn cli_udf_request() -> Option<(PathBuf, PathBuf)> {
     let args: Vec<String> = std::env::args().collect();
-    let i = args.iter().position(|a| a == "--udf-to-pdf")?;
+    let i = args.iter().position(|a| a == "--udf-to-pdf" || a == "--to-pdf")?;
     Some((PathBuf::from(args.get(i + 1)?), PathBuf::from(args.get(i + 2)?)))
 }
 
@@ -525,16 +564,16 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             file_info, read_pdf, thumbnail, open_path, reveal_path, ghostscript, initial_files,
             compress, scan_begin, scan_page, scan_finish, scan_dpi,
-            images_to_pdf, udf_to_pdf, udf_to_docx, merge, split, organize,
+            images_to_pdf, udf_to_pdf, udf_to_docx, convert_to_pdf, office_engines, merge, split, organize,
             export_begin, export_page, export_finish, protect
         ])
         .setup(|app| {
             if let Some((input, output)) = cli_udf_request() {
                 let handle = app.handle().clone();
                 tauri::async_runtime::spawn(async move {
-                    let code = match udf_print::convert(&handle, &input, &output).await {
-                        Ok(pages) => {
-                            println!("{pages} sayfa → {}", output.display());
+                    let code = match convert::to_pdf(&handle, &input, &output, images::PageSize::A4, true).await {
+                        Ok(how) => {
+                            println!("{} → {}", how.unwrap_or_default(), output.display());
                             0
                         }
                         Err(e) => {

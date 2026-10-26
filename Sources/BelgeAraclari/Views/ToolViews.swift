@@ -111,6 +111,72 @@ struct ImagesView: View {
     }
 }
 
+// MARK: - PDF'e Dönüştür / Office'ten PDF'e
+
+struct ConvertView: View {
+    @Bindable var model: ConvertModel
+    let tool: Tool
+    @AppStorage(SettingsKey.useInstalledOffice) private var useInstalledOffice = true
+
+    private var many: Bool { model.store.files.count > 1 }
+
+    var body: some View {
+        ToolPage(tool: tool) {
+            if tool == .convert {
+                FilePicker(store: model.store, tool: tool, title: "Dosyaları buraya sürükleyin",
+                           subtitle: "PDF, Word, Excel, PowerPoint, UDF, JPG, PNG, TIFF… karışık olabilir · Sırayı sürükleyerek değiştirin",
+                           listTitle: "Belge sırası", reorderable: true)
+            } else {
+                FilePicker(store: model.store, tool: tool, title: "Office dosyalarını buraya sürükleyin",
+                           subtitle: "Word (.docx, .doc, .rtf, .odt), Excel (.xlsx, .xls, .ods) ve PowerPoint (.pptx, .ppt, .odp)",
+                           listTitle: "Belge sırası", reorderable: true)
+            }
+
+            VStack(alignment: .leading, spacing: 16) {
+                SectionTitle(text: "Çıktı")
+                Toggle(isOn: $model.merge) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Tek PDF'te birleştir").fontWeight(.medium)
+                        Text(model.merge ? "Tüm dosyalar listedeki sırayla tek bir PDF olur." : "Her dosya için ayrı bir PDF oluşturulur (PDF'ler olduğu gibi kalır).")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+                .toggleStyle(.switch)
+                .tint(tool.tint)
+                .disabled(!many)
+
+                if model.merge && many {
+                    OptionRow(label: "Dosya adı") {
+                        TextField(model.store.files.first.map { Output.baseName($0.url) } ?? "Belge", text: $model.outputName)
+                            .textFieldStyle(.roundedBorder).frame(maxWidth: 300)
+                        Text(".pdf").foregroundStyle(.secondary)
+                    }
+                }
+                if model.hasImages {
+                    OptionRow(label: "Resim sayfaları") {
+                        Picker("", selection: $model.imagePage) {
+                            Text("A4").tag(PageSize.a4)
+                            Text("Resme göre").tag(PageSize.fit)
+                        }
+                        .pickerStyle(.segmented).labelsHidden().frame(maxWidth: 220)
+                    }
+                }
+                Banner(text: useInstalledOffice
+                       ? "Office dosyaları bu Mac'te Microsoft Office veya LibreOffice varsa onunla birebir çevrilir; ilk seferde macOS izin isteyebilir. Yoksa Word (.docx) dosyaları yerleşik dönüştürücüyle çevrilir. Hiçbir dosya internete gönderilmez."
+                       : "Office dosyaları yalnızca yerleşik dönüştürücüyle çevrilir (Word .docx). Excel, PowerPoint ve eski biçimler için Ayarlar'dan kurulu Office kullanımını açın.")
+            }
+            .card()
+
+            ResultsView(job: model.job, tint: tool.tint)
+        } bar: {
+            ActionBar(job: model.job, tool: tool, title: model.merge && many ? "Birleştir ve PDF Yap" : "PDF'e Çevir",
+                      info: model.store.files.isEmpty ? "Dosya ekleyin" : "\(model.store.files.count) dosya",
+                      disabled: model.store.files.isEmpty, action: model.start)
+        }
+        .animation(.snappy, value: model.store.files.count)
+    }
+}
+
 // MARK: - UDF → PDF / Word
 
 struct UDFView: View {
@@ -359,6 +425,8 @@ struct FilePicker: View {
         case .pdf: return FileTypes.pdf
         case .image: return FileTypes.images
         case .udf: return FileTypes.udf
+        case .office: return FileTypes.office
+        case .any: return FileTypes.convertible
         }
     }
 

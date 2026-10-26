@@ -5,6 +5,8 @@ struct SettingsView: View {
     @AppStorage(SettingsKey.outputMode) private var outputMode = 0
     @AppStorage(SettingsKey.outputFolder) private var outputFolder = ""
     @AppStorage(SettingsKey.useGhostscript) private var useGhostscript = true
+    @AppStorage(SettingsKey.useInstalledOffice) private var useInstalledOffice = true
+    @State private var officeSuites: [String]?
 
     var body: some View {
         Form {
@@ -37,9 +39,25 @@ struct SettingsView: View {
                         .textSelection(.enabled)
                 }
             }
+
+            Section("Office dosyaları") {
+                Toggle("Microsoft Office veya LibreOffice yüklüyse onu kullan", isOn: $useInstalledOffice)
+                if let suites = officeSuites {
+                    if suites.isEmpty {
+                        Text("Office programı bulunamadı. Word (.docx) dosyaları yerleşik dönüştürücüyle çevrilir; Excel, PowerPoint ve eski .doc/.xls/.ppt dosyaları için Microsoft Office veya ücretsiz LibreOffice gerekir.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    } else {
+                        Label("Bulundu: \(suites.joined(separator: ", "))", systemImage: "checkmark.circle.fill")
+                            .foregroundStyle(.green).font(.caption)
+                    }
+                }
+            }
         }
         .formStyle(.grouped)
-        .frame(width: 520, height: 360)
+        .frame(width: 520, height: 470)
+        .task {
+            officeSuites = await Task.detached { BelgeCore.installedOffice() }.value
+        }
     }
 
     private func chooseFolder() {
@@ -62,7 +80,7 @@ struct AboutView: View {
                 Text("Belge Araçları").font(.title.weight(.bold))
                 Text("Sürüm \(AppInfo.version)").foregroundStyle(.secondary)
             }
-            Text("PDF küçültme, resimden PDF, UDF’ten PDF ve Word’e, birleştirme, bölme, sayfa düzenleme ve şifreleme. Tamamen yerel çalışır; hiçbir dosya veya veri internete gönderilmez.")
+            Text("Word, Excel, UDF ve resimlerden PDF, UDF’ten Word’e, PDF küçültme, birleştirme, bölme, sayfa düzenleme ve şifreleme. Tamamen yerel çalışır; hiçbir dosya veya veri internete gönderilmez.")
                 .multilineTextAlignment(.center)
                 .font(.callout)
                 .foregroundStyle(.secondary)

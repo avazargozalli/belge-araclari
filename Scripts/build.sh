@@ -9,7 +9,7 @@ cd "$ROOT"
 APP_NAME="Belge Araçları"
 EXECUTABLE="BelgeAraclari"
 BUNDLE_ID="com.azargozalli.belgearaclari"
-VERSION="1.3.0"
+VERSION="1.4.0"
 BUILD_NUMBER="1"
 DIST="$ROOT/dist"
 APP="$DIST/$APP_NAME.app"
@@ -64,6 +64,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>NSHighResolutionCapable</key><true/>
   <key>NSSupportsAutomaticGraphicsSwitching</key><true/>
   <key>NSHumanReadableCopyright</key><string>© 2026 Azar Gozalli · MIT</string>
+  <key>NSAppleEventsUsageDescription</key><string>Office dosyalarını birebir PDF'e çevirmek için bu Mac'teki Microsoft Word, Excel veya PowerPoint kullanılır. Dosyalar bilgisayarınızdan çıkmaz.</string>
   <key>CFBundleDocumentTypes</key>
   <array>
     <dict>
@@ -77,6 +78,17 @@ cat > "$APP/Contents/Info.plist" <<PLIST
       <key>CFBundleTypeRole</key><string>Viewer</string>
       <key>LSHandlerRank</key><string>Alternate</string>
       <key>CFBundleTypeExtensions</key><array><string>udf</string></array>
+    </dict>
+    <dict>
+      <key>CFBundleTypeName</key><string>Office belgesi</string>
+      <key>CFBundleTypeRole</key><string>Viewer</string>
+      <key>LSHandlerRank</key><string>Alternate</string>
+      <key>CFBundleTypeExtensions</key>
+      <array>
+        <string>doc</string><string>docx</string><string>rtf</string><string>odt</string>
+        <string>xls</string><string>xlsx</string><string>ods</string>
+        <string>ppt</string><string>pptx</string><string>odp</string>
+      </array>
     </dict>
     <dict>
       <key>CFBundleTypeName</key><string>Resim</string>

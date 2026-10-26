@@ -159,6 +159,9 @@ pub fn parse_xml(xml: &str) -> std::result::Result<UdfDocument, String> {
     if let Some(props) = child("properties") {
         if let Some(format) = props.children().find(|n| n.has_tag_name("pageFormat")) {
             let a = attrs_of(format);
+            // pageWidth/pageHeight (portrait, points) are written by the Word reader for non-A4 paper.
+            doc.page_width = num(a.get("pageWidth"), 595.28).max(72.0);
+            doc.page_height = num(a.get("pageHeight"), 841.89).max(72.0);
             if a.get("paperOrientation").map(String::as_str) == Some("0") {
                 std::mem::swap(&mut doc.page_width, &mut doc.page_height);
             }
@@ -293,6 +296,9 @@ fn font_family(family: &str) -> String {
         "Lucida Grande" => "'Lucida Grande', 'Segoe UI', sans-serif".into(),
         "Bookman Old Style" => "'Bookman Old Style', Georgia, serif".into(),
         "Segoe Script" => "'Segoe Script', cursive".into(),
+        "Calibri" | "Calibri Light" | "Aptos" | "Segoe UI" | "Tahoma" | "Verdana" | "Candara" | "Corbel" | "Century Gothic" | "Trebuchet MS" | "Arial Narrow" => {
+            format!("'{family}', Arial, Helvetica, sans-serif")
+        }
         other => format!("'{}', 'Times New Roman', serif", other.replace('\'', "")),
     }
 }
@@ -330,10 +336,11 @@ fn font_css(a: &Attrs) -> String {
         write!(css, "background-color:{c};").ok();
     }
     if a.get("superscript").map(String::as_str) == Some("true") {
-        css.push_str("vertical-align:super;font-size:smaller;");
+        // Shifted with position, so footnote marks do not make the line taller.
+        css.push_str("font-size:65%;position:relative;top:-0.5em;line-height:0;");
     }
     if a.get("subscript").map(String::as_str) == Some("true") {
-        css.push_str("vertical-align:sub;font-size:smaller;");
+        css.push_str("font-size:65%;position:relative;top:0.2em;line-height:0;");
     }
     css
 }
@@ -578,8 +585,9 @@ impl UdfDocument {
         let align = ["left", "center", "right", "justify"][l.align];
         write!(
             out,
-            "<p data-tabs=\"{}\" data-def=\"{default_interval}\" style=\"position:relative;text-align:{align};padding-left:{:.2}pt;padding-right:{:.2}pt;text-indent:{:.2}pt;margin:{:.2}pt 0 {:.2}pt 0;line-height:{:.4};{}\">",
+            "<p data-tabs=\"{}\" data-def=\"{default_interval}\" style=\"{}position:relative;text-align:{align};padding-left:{:.2}pt;padding-right:{:.2}pt;text-indent:{:.2}pt;margin:{:.2}pt 0 {:.2}pt 0;line-height:{:.4};{}\">",
             stops.join(","),
+            if is_true(&p.attrs, "pageBreakBefore") { "break-before:page;" } else { "" },
             l.wrap_start(),
             l.right,
             l.text_start - l.wrap_start(),
@@ -618,7 +626,7 @@ impl UdfDocument {
                             // A figure space widened with letter-spacing: underlines continue across it, as in UYAP.
                             out.push_str("<span class=\"tab\">\u{2007}</span>");
                         }
-                        out.push_str(&esc(piece).replace('\n', "<br>"));
+                        out.push_str(&esc(piece).replace(['\n', '\u{2028}'], "<br>"));
                     }
                     out.push_str("</span>");
                     visible = true;

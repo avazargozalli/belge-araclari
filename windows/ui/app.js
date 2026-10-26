@@ -13,12 +13,16 @@ const invoke = (cmd, args, options) => {
 // MARK: - Tools
 
 const TOOLS = [
+  { id: 'convert', icon: 'convert', title: "PDF'e Dönüştür", tint: 'var(--amber)', accepts: 'any',
+    subtitle: "Word, Excel, UDF, resim ve PDF dosyalarını tek seferde PDF'e çevirin; ayrı ayrı veya tek PDF olarak." },
   { id: 'compress', icon: 'compress', title: 'PDF Küçült', tint: 'var(--green)', accepts: 'pdf',
     subtitle: 'PDF dosyalarını makul kaliteyle sıkıştırın veya daha küçük hale getirin.' },
   { id: 'images', icon: 'images', title: "Resimden PDF'e", tint: 'var(--blue)', accepts: 'image',
     subtitle: 'JPG, PNG, WEBP ve TIFF resimlerini tek PDF yapın.' },
   { id: 'udf', icon: 'udf', title: 'UDF Dönüştür', tint: 'var(--red)', accepts: 'udf',
     subtitle: "UYAP UDF belgelerini biçimini koruyarak PDF'e veya Word'e çevirin, isterseniz tek dosyada birleştirin." },
+  { id: 'office', icon: 'office', title: "Office'ten PDF'e", tint: 'var(--navy)', accepts: 'office',
+    subtitle: 'Word, Excel ve PowerPoint dosyalarını PDF\'e çevirin, isterseniz tek PDF\'te birleştirin.' },
   { id: 'merge', icon: 'merge', title: 'PDF Birleştir', tint: 'var(--purple)', accepts: 'pdf',
     subtitle: "Birden fazla PDF'i istediğiniz sırayla tek dosyada birleştirin." },
   { id: 'split', icon: 'split', title: 'PDF Böl', tint: 'var(--orange)', accepts: 'pdf', single: true,
@@ -43,14 +47,17 @@ const LEVELS = [
 const newJob = () => ({ id: null, running: false, progress: 0, status: '', results: [], error: null });
 
 function loadSettings() {
-  try { return { outMode: 'next', outDir: '', useGs: true, ...JSON.parse(localStorage.getItem('settings') || '{}') }; }
-  catch { return { outMode: 'next', outDir: '', useGs: true }; }
+  const defaults = { outMode: 'next', outDir: '', useGs: true, useOffice: true };
+  try { return { ...defaults, ...JSON.parse(localStorage.getItem('settings') || '{}') }; }
+  catch { return defaults; }
 }
 
 const state = {
   view: 'home',
   settings: loadSettings(),
   tools: {
+    convert: { files: [], merge: false, name: '', imagePage: 'a4', job: newJob() },
+    office: { files: [], merge: false, name: '', imagePage: 'a4', job: newJob() },
     compress: { files: [], level: 'balanced', scan: false, job: newJob() },
     images: { files: [], options: { pageSize: 'a4', orientation: 'auto', margin: 'none', quality: 'balanced' }, name: '', job: newJob() },
     udf: { files: [], format: 'pdf', merge: true, name: '', job: newJob() },
@@ -84,13 +91,17 @@ const totalSize = (files) => files.reduce((s, f) => s + (f.size || 0), 0);
 const totalPages = (files) => files.reduce((s, f) => s + (f.pages || 0), 0);
 const baseName = (path) => (path.split(/[\\/]/).pop() || '').replace(/\.[^.]+$/, '');
 
+const OFFICE = ['doc', 'docx', 'docm', 'dot', 'dotx', 'dotm', 'rtf', 'odt', 'ott', 'wpd', 'xls', 'xlsx', 'xlsm', 'xlsb', 'xlt', 'xltx', 'ods', 'ots', 'csv',
+  'ppt', 'pptx', 'pptm', 'pps', 'ppsx', 'pot', 'potx', 'odp', 'otp'];
+
 async function pickFiles(kind, multiple) {
   const images = ['jpg', 'jpeg', 'png', 'webp', 'tif', 'tiff', 'gif', 'bmp'];
   const filters = {
     pdf: [{ name: 'PDF', extensions: ['pdf'] }],
     image: [{ name: 'Resimler', extensions: images }],
     udf: [{ name: 'UYAP UDF', extensions: ['udf'] }],
-  }[kind] || [{ name: 'PDF, UDF ve resimler', extensions: ['pdf', 'udf', ...images] }];
+    office: [{ name: 'Word, Excel, PowerPoint', extensions: OFFICE }],
+  }[kind] || [{ name: 'PDF, Office, UDF ve resimler', extensions: ['pdf', 'udf', ...OFFICE, ...images] }];
   const picked = await tauri()?.dialog.open({ multiple, filters });
   if (!picked) return [];
   return Array.isArray(picked) ? picked : [picked];
@@ -105,7 +116,7 @@ async function describe(paths) {
 
 async function addFiles(toolId, paths) {
   const tool = toolById[toolId];
-  const infos = (await describe(paths)).filter((f) => f.kind === tool.accepts);
+  const infos = (await describe(paths)).filter((f) => tool.accepts === 'any' || f.kind === tool.accepts);
   if (!infos.length) return;
   if (toolId === 'organize') return loadOrganize(infos[0]);
   const t = state.tools[toolId];
@@ -117,9 +128,19 @@ async function addFiles(toolId, paths) {
   render();
 }
 
-/** Files dropped on the window or opened with the app go to the current tool, or are routed like on macOS. */
+/** Files dropped on the window or opened with the app go to the current tool, or are routed like on
+ * macOS: a mix of kinds goes to "PDF'e Dönüştür", office files alone to "Office'ten PDF'e". */
 async function routeFiles(paths) {
   const infos = await describe(paths);
+  const kinds = new Set(infos.map((f) => f.kind));
+  if (state.view === 'convert' || kinds.size > 1) {
+    state.view = 'convert';
+    return addFiles('convert', infos.map((f) => f.path));
+  }
+  if (kinds.has('office')) {
+    state.view = 'office';
+    return addFiles('office', infos.map((f) => f.path));
+  }
   const pdfs = infos.filter((f) => f.kind === 'pdf').map((f) => f.path);
   const images = infos.filter((f) => f.kind === 'image').map((f) => f.path);
   const udfs = infos.filter((f) => f.kind === 'udf').map((f) => f.path);
@@ -139,6 +160,14 @@ async function routeFiles(paths) {
 }
 
 // MARK: - Jobs
+
+function runConvert(id) {
+  const t = state.tools[id];
+  runJob(id, (job) => invoke('convert_to_pdf', {
+    job: job.id, paths: t.files.map((f) => f.path), merge: t.merge, name: t.name, imagePage: t.imagePage,
+    useOffice: state.settings.useOffice, outDir: outDir(),
+  }));
+}
 
 async function runJob(toolId, work) {
   const job = state.tools[toolId].job;
@@ -190,6 +219,9 @@ const actions = {
       return results;
     });
   },
+
+  convert() { runConvert('convert'); },
+  office() { runConvert('office'); },
 
   udf() {
     const t = state.tools.udf;
@@ -339,7 +371,7 @@ function renderHome() {
         <h1>Belge araçları</h1>
         <p>PDF dosyalarını küçültün, resimleri PDF'e çevirin, birleştirin ve düzenleyin. Tüm işlemler bu bilgisayarda yapılır; orijinal dosyalarınız asla değiştirilmez.</p>
       </div>
-      ${dropzone({ title: 'Dosyaları buraya bırakın', text: "PDF'ler küçültmeye, resimler ve UDF'ler PDF'e dönüştürmeye gider\nveya seçmek için tıklayın", kind: 'any' })}
+      ${dropzone({ title: 'Dosyaları buraya bırakın', text: "PDF'ler küçültmeye; Word, Excel, UDF ve resimler PDF'e dönüştürmeye gider\nveya seçmek için tıklayın", kind: 'any' })}
       <p class="eyebrow">Tüm araçlar</p>
       <div class="tool-grid">
         ${TOOLS.map((t) => `
@@ -378,7 +410,7 @@ function fileList(toolId, { title = 'Dosyalar', sortable = false } = {}) {
       ${t.files.map((f, i) => `
         <div class="file-row" data-sort-item data-id="${f.id}">
           ${showIndex ? `<span class="index">${i + 1}</span>` : ''}
-          <div class="thumb" data-thumb="${esc(f.path)}" data-kind="${f.kind}">${icon({ pdf: 'file', udf: 'udf' }[f.kind] || 'image')}</div>
+          <div class="thumb" data-thumb="${esc(f.path)}" data-kind="${f.kind}">${icon({ pdf: 'file', udf: 'udf', office: 'office' }[f.kind] || 'image')}</div>
           <div class="file-meta">
             <strong title="${esc(f.path)}">${esc(f.name)}</strong>
             <span>${formatBytes(f.size)}${f.kind === 'pdf' || f.pages > 1 ? ` · ${f.locked ? '?' : f.pages} sayfa` : ''}${f.locked ? ` · <span class="lock">Şifreli</span>` : ''}</span>
@@ -450,6 +482,27 @@ function toolBody(id) {
           ${warn
             ? banner('Sıkıştırmayı artırmak görüntü kalitesini düşürebilir. Sonucu kontrol etmeden orijinal dosyayı silmeyin.', 'warn')
             : banner("Makul seçenek dosyayı bozmadan küçültmeyi hedefler. Zaten optimize edilmiş PDF'lerde boyut her zaman azalmayabilir; bu durumda yeni dosya oluşturulmaz.")}
+        </div>`;
+    }
+    case 'convert':
+    case 'office': {
+      const many = t.files.length > 1;
+      const hasImages = t.files.some((f) => f.kind === 'image');
+      const picker = id === 'convert'
+        ? filePicker(id, { title: 'Dosyaları buraya sürükleyin', text: 'PDF, Word, Excel, PowerPoint, UDF, JPG, PNG, TIFF… karışık olabilir · Sırayı sürükleyerek değiştirin', listTitle: 'Belge sırası', sortable: true })
+        : filePicker(id, { title: 'Office dosyalarını buraya sürükleyin', text: 'Word (.docx, .doc, .rtf, .odt), Excel (.xlsx, .xls, .ods) ve PowerPoint (.pptx, .ppt, .odp)', listTitle: 'Belge sırası', sortable: true });
+      return picker + `
+        <div class="card pad">
+          <p class="eyebrow">Çıktı</p>
+          <label class="toggle">
+            <span><strong>Tek PDF'te birleştir</strong><span>${t.merge ? 'Tüm dosyalar listedeki sırayla tek bir PDF olur.' : 'Her dosya için ayrı bir PDF oluşturulur (PDF\'ler olduğu gibi kalır).'}</span></span>
+            <span class="switch"><input type="checkbox" data-bind="merge" ${t.merge ? 'checked' : ''} ${many ? '' : 'disabled'}><i></i></span>
+          </label>
+          ${t.merge && many ? `<div class="option-row"><label for="f-name">Dosya adı</label><span class="inline"><input id="f-name" class="field" type="text" data-bind="name" value="${esc(t.name)}" placeholder="${esc(baseName(t.files[0].path))}"><span class="muted">.pdf</span></span></div>` : ''}
+          ${hasImages ? `<div class="option-row"><span class="label">Resim sayfaları</span>${segmented('imagePage', t.imagePage, [['a4', 'A4'], ['fit', 'Resme göre']])}</div>` : ''}
+          ${state.settings.useOffice
+            ? banner("Office dosyaları bilgisayarda Microsoft Office veya LibreOffice varsa onunla birebir çevrilir; yoksa Word (.docx) dosyaları yerleşik dönüştürücüyle çevrilir. Hiçbir dosya internete gönderilmez.")
+            : banner("Office dosyaları yalnızca yerleşik dönüştürücüyle çevrilir (Word .docx). Excel, PowerPoint ve eski biçimler için Ayarlar'dan kurulu Office kullanımını açın.")}
         </div>`;
     }
     case 'udf': {
@@ -576,7 +629,8 @@ function actionBarHtml(id) {
   const tool = toolById[id];
   const t = state.tools[id];
   const job = t.job;
-  const label = { compress: 'PDF Küçült', images: 'PDF Oluştur', udf: t.merge && t.files?.length > 1 ? (t.format === 'docx' ? 'Birleştir ve Word Yap' : 'Birleştir ve PDF Yap') : (t.format === 'docx' ? "Word'e Çevir" : "PDF'e Çevir"), merge: 'Birleştir', split: 'Böl', organize: 'Kaydet',
+  const label = { convert: t.merge && t.files?.length > 1 ? 'Birleştir ve PDF Yap' : "PDF'e Çevir", office: t.merge && t.files?.length > 1 ? 'Birleştir ve PDF Yap' : "PDF'e Çevir",
+    compress: 'PDF Küçült', images: 'PDF Oluştur', udf: t.merge && t.files?.length > 1 ? (t.format === 'docx' ? 'Birleştir ve Word Yap' : 'Birleştir ve PDF Yap') : (t.format === 'docx' ? "Word'e Çevir" : "PDF'e Çevir"), merge: 'Birleştir', split: 'Böl', organize: 'Kaydet',
     pdfToImages: 'Görsellere Dönüştür', protect: t.mode === 'encrypt' ? 'Şifrele' : 'Şifreyi Kaldır' }[id];
   let info = '';
   let disabled = false;
@@ -584,6 +638,7 @@ function actionBarHtml(id) {
     case 'compress': info = t.files.length ? `${t.files.length} PDF · ${formatBytes(totalSize(t.files))}` : 'PDF ekleyin'; disabled = !t.files.length; break;
     case 'images': info = t.files.length ? `${totalPages(t.files)} sayfa oluşturulacak` : 'Resim ekleyin'; disabled = !t.files.length; break;
     case 'udf': info = t.files.length ? `${t.files.length} UDF` : 'UDF ekleyin'; disabled = !t.files.length; break;
+    case 'convert': case 'office': info = t.files.length ? `${t.files.length} dosya` : 'Dosya ekleyin'; disabled = !t.files.length; break;
     case 'merge': info = t.files.length < 2 ? 'En az iki PDF ekleyin' : `${t.files.length} dosya · ${totalPages(t.files)} sayfa`; disabled = t.files.length < 2; break;
     case 'split': info = t.files[0] ? `${t.files[0].pages} sayfa` : 'PDF ekleyin'; disabled = !t.files.length || (t.mode === 'ranges' && !t.ranges.trim()); break;
     case 'organize': info = t.file ? `${t.pages.length} sayfa · ${t.selected.size} seçili` : 'PDF ekleyin'; disabled = !t.file || !t.pages.length || !organizeDirty(); break;
@@ -643,7 +698,7 @@ let thumbQueue = Promise.resolve();
 
 function hydrateThumbs() {
   for (const el of main.querySelectorAll('[data-thumb]')) {
-    if (el.dataset.kind === 'udf') continue;
+    if (el.dataset.kind === 'udf' || el.dataset.kind === 'office') continue;
     const path = el.dataset.thumb;
     if (thumbCache.has(path)) {
       if (thumbCache.get(path)) el.innerHTML = `<img src="${thumbCache.get(path)}" alt="">`;
@@ -868,6 +923,7 @@ function syncSettingsDialog() {
   document.getElementById('folder-row').hidden = s.outMode !== 'folder';
   document.getElementById('folder-path').textContent = s.outDir || 'Klasör seçilmedi';
   document.getElementById('use-gs').checked = s.useGs;
+  document.getElementById('use-office').checked = s.useOffice;
 }
 
 document.getElementById('open-settings').addEventListener('click', async () => {
@@ -877,11 +933,16 @@ document.getElementById('open-settings').addEventListener('click', async () => {
     ? `Bulundu: ${gs}`
     : 'Ghostscript bulunamadı; yerleşik motor kullanılır. Daha güçlü sıkıştırma için isteğe bağlı olarak ghostscript.com adresinden kurabilirsiniz.';
   settingsDialog.showModal();
+  const suites = await invoke('office_engines').catch(() => []);
+  document.getElementById('office-status').textContent = suites.length
+    ? `Bulundu: ${suites.join(', ')}`
+    : 'Office programı bulunamadı. Word (.docx) dosyaları yerleşik dönüştürücüyle çevrilir; Excel, PowerPoint ve eski .doc/.xls/.ppt dosyaları için Microsoft Office veya ücretsiz LibreOffice gerekir.';
 });
 
 settingsDialog.addEventListener('change', (event) => {
   if (event.target.name === 'outMode') state.settings.outMode = event.target.value;
   if (event.target.id === 'use-gs') state.settings.useGs = event.target.checked;
+  if (event.target.id === 'use-office') state.settings.useOffice = event.target.checked;
   saveSettings();
   syncSettingsDialog();
 });

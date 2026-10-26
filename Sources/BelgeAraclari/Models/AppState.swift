@@ -4,12 +4,14 @@ import PDFKit
 import ImageIO
 
 enum Tool: String, CaseIterable, Identifiable, Hashable {
-    case compress, imagesToPDF, udfToPDF, merge, split, organize, pdfToImages, protect
+    case convert, compress, imagesToPDF, udfToPDF, officeToPDF, merge, split, organize, pdfToImages, protect
     var id: String { rawValue }
 
     var title: String {
         switch self {
+        case .convert: return "PDF'e Dönüştür"
         case .compress: return "PDF Küçült"
+        case .officeToPDF: return "Office'ten PDF'e"
         case .imagesToPDF: return "Resimden PDF'e"
         case .udfToPDF: return "UDF Dönüştür"
         case .merge: return "PDF Birleştir"
@@ -22,6 +24,8 @@ enum Tool: String, CaseIterable, Identifiable, Hashable {
 
     var subtitle: String {
         switch self {
+        case .convert: return "Word, Excel, UDF, resim ve PDF dosyalarını tek seferde PDF'e çevirin; ayrı ayrı veya tek PDF olarak."
+        case .officeToPDF: return "Word, Excel ve PowerPoint dosyalarını PDF'e çevirin, isterseniz tek PDF'te birleştirin."
         case .compress: return "PDF dosyalarını makul kaliteyle sıkıştırın veya daha küçük hale getirin."
         case .imagesToPDF: return "JPG, PNG, WEBP, HEIC ve TIFF resimlerini tek PDF yapın."
         case .udfToPDF: return "UYAP UDF belgelerini biçimini koruyarak PDF'e veya Word'e çevirin, isterseniz tek dosyada birleştirin."
@@ -35,6 +39,8 @@ enum Tool: String, CaseIterable, Identifiable, Hashable {
 
     var symbol: String {
         switch self {
+        case .convert: return "arrow.triangle.2.circlepath.doc.on.clipboard"
+        case .officeToPDF: return "doc.richtext"
         case .compress: return "arrow.down.right.and.arrow.up.left"
         case .imagesToPDF: return "photo.on.rectangle.angled"
         case .udfToPDF: return "doc.text"
@@ -48,6 +54,8 @@ enum Tool: String, CaseIterable, Identifiable, Hashable {
 
     var tint: Color {
         switch self {
+        case .convert: return Color(red: 0.85, green: 0.42, blue: 0.1)
+        case .officeToPDF: return Color(red: 0.16, green: 0.36, blue: 0.75)
         case .compress: return Color(red: 0.06, green: 0.62, blue: 0.47)
         case .imagesToPDF: return Color(red: 0.15, green: 0.45, blue: 0.95)
         case .udfToPDF: return Color(red: 0.78, green: 0.2, blue: 0.24)
@@ -59,8 +67,10 @@ enum Tool: String, CaseIterable, Identifiable, Hashable {
         }
     }
 
-    var shortcut: KeyEquivalent {
-        KeyEquivalent(Character(String((Tool.allCases.firstIndex(of: self) ?? 0) + 1)))
+    /// ⌘1…⌘9 for the first nine tools.
+    var shortcut: KeyEquivalent? {
+        let index = (Tool.allCases.firstIndex(of: self) ?? 99) + 1
+        return index <= 9 ? KeyEquivalent(Character(String(index))) : nil
     }
 
     var acceptsImages: Bool { self == .imagesToPDF }
@@ -83,15 +93,31 @@ final class AppState {
     let compress = CompressModel()
     let images = ImagesModel()
     let udf = UDFModel()
+    let convert = ConvertModel(kind: .any)
+    let office = ConvertModel(kind: .office)
     let merge = MergeModel()
     let split = SplitModel()
     let organize = OrganizeModel()
     let pdfToImages = PDFToImagesModel()
     let protect = ProtectModel()
 
-    /// Routes files opened from Finder / Dock / the home drop zone to the right tool.
+    /// Routes files opened from Finder / Dock / the home drop zone to the right tool. A mix of
+    /// kinds, or office files, goes to the "PDF'e Dönüştür" tool.
     func open(_ urls: [URL]) {
         let files = FileTypes.expand(urls)
+        let kinds = Set(files.compactMap { url -> Int? in
+            FileTypes.isPDF(url) ? 0 : FileTypes.isImage(url) ? 1 : FileTypes.isUDF(url) ? 2 : FileTypes.isOffice(url) ? 3 : nil
+        })
+        if kinds == [3], selection != .tool(.convert) {
+            office.store.add(files)
+            selection = .tool(.officeToPDF)
+            return
+        }
+        if kinds.count > 1 || kinds.contains(3) || selection == .tool(.convert) {
+            convert.store.add(files)
+            selection = .tool(.convert)
+            return
+        }
         let udfs = files.filter(FileTypes.isUDF)
         if !udfs.isEmpty {
             udf.store.add(udfs)
@@ -107,7 +133,7 @@ final class AppState {
             return
         }
 
-        if case .tool(let tool) = selection, tool != .imagesToPDF, tool != .udfToPDF {
+        if case .tool(let tool) = selection, ![.imagesToPDF, .udfToPDF, .officeToPDF, .convert].contains(tool) {
             add(pdfs, to: tool)
         } else {
             add(pdfs, to: .compress)
@@ -122,7 +148,7 @@ final class AppState {
         case .organize: organize.load(pdfs.first)
         case .pdfToImages: pdfToImages.store.add(pdfs)
         case .protect: protect.store.add(pdfs)
-        case .imagesToPDF, .udfToPDF: break
+        case .imagesToPDF, .udfToPDF, .officeToPDF, .convert: break
         }
         selection = .tool(tool)
     }
@@ -142,7 +168,7 @@ struct FileItem: Identifiable, Hashable {
     static func make(_ url: URL) -> FileItem {
         var pages = 1
         var encrypted = false
-        if FileTypes.isUDF(url) {
+        if FileTypes.isUDF(url) || FileTypes.isOffice(url) {
             pages = 0
         } else if FileTypes.isPDF(url) {
             if let doc = CGPDFDocument(url as CFURL) {
@@ -162,7 +188,7 @@ struct FileItem: Identifiable, Hashable {
 @MainActor
 @Observable
 final class FileStore {
-    enum Kind { case pdf, image, udf }
+    enum Kind { case pdf, image, udf, office, any }
 
     let kind: Kind
     let single: Bool
@@ -182,6 +208,8 @@ final class FileStore {
             case .pdf: return FileTypes.isPDF(url)
             case .image: return FileTypes.isImage(url)
             case .udf: return FileTypes.isUDF(url)
+            case .office: return FileTypes.isOffice(url)
+            case .any: return FileTypes.isConvertible(url)
             }
         }
         let known = Set(files.map(\.url))

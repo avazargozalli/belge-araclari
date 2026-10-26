@@ -29,7 +29,7 @@
         <button class="settings-link" id="open-settings" type="button"><span data-icon="settings"></span>Ayarlar</button>
         <button class="signature" id="open-about" type="button">
           <strong>AZAR GOZALLI</strong>
-          <span>Belge Araçları · v<span id="version">1.3.0</span></span>
+          <span>Belge Araçları · v<span id="version">1.4.0</span></span>
         </button>
       </div>
     </aside>
@@ -54,6 +54,11 @@
         <p class="hint">Orijinal dosyalar hiçbir zaman değiştirilmez veya üzerine yazılmaz.</p>
       </fieldset>
       <fieldset>
+        <legend>Office dosyaları</legend>
+        <label class="switch-row"><input type="checkbox" id="use-office"> Microsoft Office veya LibreOffice yüklüyse onu kullan</label>
+        <p class="hint" id="office-status"></p>
+      </fieldset>
+      <fieldset>
         <legend>PDF küçültme motoru</legend>
         <label class="switch-row"><input type="checkbox" id="use-gs"> Ghostscript yüklüyse onu da dene</label>
         <p class="hint" id="gs-status"></p>
@@ -66,8 +71,8 @@
     <form method="dialog">
       <img src="icon.png" alt="" width="96" height="96">
       <h2>Belge Araçları</h2>
-      <p class="muted">Sürüm <span id="about-version">1.3.0</span> · Windows</p>
-      <p>PDF küçültme, resimden PDF, UDF’ten PDF ve Word’e, birleştirme, bölme, sayfa düzenleme ve şifreleme. Tamamen yerel çalışır; hiçbir dosya veya veri internete gönderilmez.</p>
+      <p class="muted">Sürüm <span id="about-version">1.4.0</span> · Windows</p>
+      <p>Word, Excel, UDF ve resimlerden PDF, UDF’ten Word’e, PDF küçültme, birleştirme, bölme, sayfa düzenleme ve şifreleme. Tamamen yerel çalışır; hiçbir dosya veya veri internete gönderilmez.</p>
       <hr>
       <p class="eyebrow">GELİŞTİREN</p>
       <p class="maker">AZAR GOZALLI</p>

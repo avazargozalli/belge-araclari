@@ -23,8 +23,11 @@ struct BelgeAraclariApp: App {
                 Button("Ana sayfa") { state.selection = .home }.keyboardShortcut("0")
                 Divider()
                 ForEach(Tool.allCases) { tool in
-                    Button(tool.title) { state.selection = .tool(tool) }
-                        .keyboardShortcut(tool.shortcut)
+                    if let key = tool.shortcut {
+                        Button(tool.title) { state.selection = .tool(tool) }.keyboardShortcut(key)
+                    } else {
+                        Button(tool.title) { state.selection = .tool(tool) }
+                    }
                 }
             }
         }

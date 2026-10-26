@@ -162,6 +162,36 @@ jobs:
           print("UDF → Word content: passed")
           EOF
 
+      - name: Convert the Word file back to PDF (built-in Word reader, WebView2)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $destination = Join-Path $env:RUNNER_TEMP 'belge-araclari'
+          $exe = Get-ChildItem "$destination/*.exe" | Where-Object { $_.Name -notmatch 'uninstall' } | Select-Object -First 1
+          $docx = Join-Path $env:RUNNER_TEMP 'udf-check/ornek-dilekce.docx'
+          $out = Join-Path $env:RUNNER_TEMP 'udf-check/word-to-pdf.pdf'
+          $process = Start-Process -FilePath $exe.FullName -ArgumentList @('--to-pdf', "`"$docx`"", "`"$out`"") -PassThru
+          if (-not $process.WaitForExit(180000)) { Stop-Process -Id $process.Id -Force; throw 'Word to PDF timed out' }
+          if ($process.ExitCode -ne 0) { throw "Word to PDF failed with exit code $($process.ExitCode)" }
+          if (-not (Test-Path $out)) { throw 'Word to PDF produced no file' }
+          Write-Output "Word → PDF: $((Get-Item $out).Length) bytes"
+
+      - name: Check Word → PDF content
+        env:
+          PYTHONIOENCODING: utf-8
+        run: |
+          python - "$RUNNER_TEMP/udf-check/word-to-pdf.pdf" <<'EOF'
+          import sys
+          from pypdf import PdfReader
+          reader = PdfReader(sys.argv[1])
+          text = "\n".join(page.extract_text() or "" for page in reader.pages)
+          print("pages:", len(reader.pages))
+          assert "MAHKEMES" in text, "body text missing"
+          assert "Tablo hücresi metni" in text, "table text missing"
+          assert "/BelgeAntet" in reader.pages[0]["/Resources"]["/XObject"], "letterhead layer missing"
+          print("Word → PDF content: passed")
+          EOF
+
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:

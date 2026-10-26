@@ -89,6 +89,34 @@ final class UDFModel {
     }
 }
 
+/// "PDF'e Dönüştür" (any supported file) and "Office'ten PDF'e" (office files only).
+@MainActor
+@Observable
+final class ConvertModel {
+    let store: FileStore
+    let job = Job()
+    var merge = false
+    var outputName = ""
+    var imagePage = PageSize.a4
+
+    init(kind: FileStore.Kind) {
+        store = FileStore(kind: kind)
+    }
+
+    var hasImages: Bool { store.files.contains { FileTypes.isImage($0.url) } }
+
+    func start() {
+        let urls = store.files.map(\.url)
+        let merge = merge && urls.count > 1
+        let name = outputName, imagePage = imagePage
+        let useInstalled = UserDefaults.standard.object(forKey: SettingsKey.useInstalledOffice) as? Bool ?? true
+        job.run { progress in
+            try DocumentConverter.convert(urls, merge: merge, mergedName: name, imagePage: imagePage,
+                                          useInstalled: useInstalled, progress: progress)
+        }
+    }
+}
+
 @MainActor
 @Observable
 final class MergeModel {

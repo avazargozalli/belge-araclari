@@ -138,7 +138,8 @@ enum UDFParser {
         if let properties = root.elements(forName: "properties").first {
             if let format = properties.elements(forName: "pageFormat").first {
                 let a = attributes(of: format)
-                var size = CGSize(width: 595.28, height: 841.89)
+                // pageWidth/pageHeight (portrait, points) are written by the Word reader for non-A4 paper.
+                var size = CGSize(width: max(72, number(a["pageWidth"], 595.28)), height: max(72, number(a["pageHeight"], 841.89)))
                 if a["paperOrientation"] == "0" { size = CGSize(width: size.height, height: size.width) }
                 doc.pageSize = size
                 doc.margins = NSEdgeInsets(top: number(a["topMargin"], 42.5), left: number(a["leftMargin"], 42.5),
@@ -377,6 +378,10 @@ extension NSAttributedString.Key {
 enum UDFTypesetter {
     static let fallbackFamily = "Times New Roman"
 
+    /// Office fonts macOS does not ship; they fall back to a sans-serif face instead of Times.
+    private static let sansFamilies: Set<String> = ["Calibri", "Calibri Light", "Aptos", "Aptos Display", "Segoe UI", "Tahoma", "Verdana",
+                                                     "Candara", "Corbel", "Century Gothic", "Franklin Gothic Book", "Trebuchet MS", "Arial Narrow"]
+
     static func font(_ a: [String: String]) -> NSFont {
         let size = max(1, UDFParser.number(a["size"], 12))
         var family = a["family"] ?? fallbackFamily
@@ -385,7 +390,7 @@ enum UDFTypesetter {
         if family == "Monospaced" || family == "DialogInput" { family = "Courier New" }
         var font = NSFontManager.shared.font(withFamily: family, traits: [], weight: 5, size: size)
             ?? NSFont(name: family, size: size)
-            ?? NSFont(name: fallbackFamily, size: size)
+            ?? NSFont(name: sansFamilies.contains(family) ? "Arial" : fallbackFamily, size: size)
             ?? .systemFont(ofSize: size)
         if a["bold"] == "true" { font = NSFontManager.shared.convert(font, toHaveTrait: .boldFontMask) }
         if a["italic"] == "true" { font = NSFontManager.shared.convert(font, toHaveTrait: .italicFontMask) }
@@ -481,8 +486,11 @@ enum UDFTypesetter {
         ]
         if a["underline"] == "true" { attrs[.underlineStyle] = NSUnderlineStyle.single.rawValue }
         if a["strikethrough"] == "true" { attrs[.strikethroughStyle] = NSUnderlineStyle.single.rawValue }
-        if a["superscript"] == "true" { attrs[.superscript] = 1 }
-        if a["subscript"] == "true" { attrs[.superscript] = -1 }
+        // Smaller text on a shifted baseline, so footnote marks do not make the line taller.
+        if a["superscript"] == "true" || a["subscript"] == "true", let base = attrs[.font] as? NSFont {
+            attrs[.font] = NSFont(descriptor: base.fontDescriptor, size: base.pointSize * 0.65) ?? base
+            attrs[.baselineOffset] = a["superscript"] == "true" ? base.pointSize * 0.33 : -base.pointSize * 0.12
+        }
         if let background = a["background"], !background.isEmpty, let color = UDFParser.color(background) {
             attrs[.backgroundColor] = color
         }
@@ -536,6 +544,10 @@ enum UDFTypesetter {
         }
         if !out.string.hasSuffix("\n") {
             out.append(NSAttributedString(string: "\n", attributes: lastAttrs))
+        }
+        if p.attrs["pageBreakBefore"] == "true" {
+            // A form feed makes TextKit continue in the next page's text container.
+            out.insert(NSAttributedString(string: "\u{000C}", attributes: lastAttrs), at: 0)
         }
         let whole = NSRange(location: 0, length: out.length)
         out.addAttribute(.paragraphStyle, value: style, range: whole)

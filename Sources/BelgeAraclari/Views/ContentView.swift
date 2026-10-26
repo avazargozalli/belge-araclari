@@ -37,6 +37,8 @@ struct ContentView: View {
     @ViewBuilder
     private var detail: some View {
         switch state.selection {
+        case .tool(.convert): ConvertView(model: state.convert, tool: .convert)
+        case .tool(.officeToPDF): ConvertView(model: state.office, tool: .officeToPDF)
         case .tool(.compress): CompressView(model: state.compress)
         case .tool(.imagesToPDF): ImagesView(model: state.images)
         case .tool(.udfToPDF): UDFView(model: state.udf)
@@ -62,15 +64,15 @@ struct HomeView: View {
                     OfflineBadge()
                     Text("Belge araçları")
                         .font(.system(size: 36, weight: .bold))
-                    Text("PDF dosyalarını küçültün, resimleri PDF'e çevirin, birleştirin ve düzenleyin. Tüm işlemler bu Mac'te yapılır; orijinal dosyalarınız asla değiştirilmez.")
+                    Text("Word, Excel, UDF ve resimleri PDF'e çevirin; PDF'leri küçültün, birleştirin ve düzenleyin. Tüm işlemler bu Mac'te yapılır; orijinal dosyalarınız asla değiştirilmez.")
                         .font(.title3)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
 
                 DropZone(title: "Dosyaları buraya bırakın",
-                         subtitle: "PDF'ler küçültmeye, resimler ve UDF'ler PDF'e dönüştürmeye gider\nveya seçmek için tıklayın",
-                         types: FileTypes.pdf + FileTypes.images + FileTypes.udf, tint: Tool.compress.tint) { urls in
+                         subtitle: "PDF'ler küçültmeye; Word, Excel, UDF ve resimler PDF'e dönüştürmeye gider\nveya seçmek için tıklayın",
+                         types: FileTypes.convertible, tint: Tool.compress.tint) { urls in
                     state.open(urls)
                 }
 

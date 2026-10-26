@@ -101,3 +101,111 @@ fn list_labels_follow_editor_rules() {
     assert_eq!(udf::label("NUMBER_TYPE_CHAR_SMALL_D_PARANTHESE", 4), "(ç)");
     assert_eq!(udf::label("NUMBER_TYPE_ROMAN_BIG_DOT", 4), "IV.");
 }
+
+// MARK: - Word reader
+
+fn docx(files: &[(&str, &str)]) -> Vec<u8> {
+    use std::io::Write;
+    let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    let options = zip::write::SimpleFileOptions::default();
+    for (name, body) in files {
+        zip.start_file(*name, options).unwrap();
+        zip.write_all(body.as_bytes()).unwrap();
+    }
+    zip.finish().unwrap().into_inner()
+}
+
+const W: &str = r#"xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships""#;
+
+fn sample_docx() -> Vec<u8> {
+    let document = format!(
+        r#"<w:document {W}><w:body>
+<w:p><w:pPr><w:pStyle w:val="Baslik"/></w:pPr><w:r><w:t>DİLEKÇE</w:t></w:r></w:p>
+<w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr></w:pPr><w:r><w:t>Birinci</w:t></w:r></w:p>
+<w:p><w:pPr><w:numPr><w:ilvl w:val="1"/><w:numId w:val="1"/></w:numPr></w:pPr><w:r><w:t>Alt</w:t></w:r></w:p>
+<w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr></w:pPr><w:r><w:t>İkinci</w:t></w:r><w:r><w:footnoteReference w:id="2"/></w:r></w:p>
+<w:tbl><w:tblPr><w:tblStyle w:val="TabloKilavuzu"/></w:tblPr><w:tblGrid><w:gridCol w:w="2000"/><w:gridCol w:w="3000"/></w:tblGrid>
+<w:tr><w:tc><w:p><w:r><w:t>A</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>B</w:t></w:r></w:p></w:tc></w:tr>
+<w:tr><w:tc><w:tcPr><w:gridSpan w:val="2"/></w:tcPr><w:p><w:r><w:t>Birleşik</w:t></w:r></w:p></w:tc></w:tr></w:tbl>
+<w:p><w:r><w:br w:type="page"/></w:r></w:p>
+<w:p><w:pPr><w:tabs><w:tab w:val="right" w:leader="dot" w:pos="8000"/></w:tabs></w:pPr><w:r><w:rPr><w:b/><w:color w:val="FF0000"/></w:rPr><w:t>İçindekiler</w:t></w:r><w:r><w:tab/><w:t>7</w:t></w:r></w:p>
+<w:sectPr><w:headerReference w:type="default" r:id="rIdH"/><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1417" w:right="1417" w:bottom="1417" w:left="1417" w:header="708" w:footer="708"/></w:sectPr>
+</w:body></w:document>"#
+    );
+    let styles = format!(
+        r#"<w:styles {W}><w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman"/><w:sz w:val="24"/><w:lang w:val="tr-TR"/></w:rPr></w:rPrDefault><w:pPrDefault><w:pPr><w:spacing w:after="120"/></w:pPr></w:pPrDefault></w:docDefaults>
+<w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/></w:style>
+<w:style w:type="paragraph" w:styleId="Baslik"><w:basedOn w:val="Normal"/><w:pPr><w:jc w:val="center"/></w:pPr><w:rPr><w:b/><w:sz w:val="28"/></w:rPr></w:style>
+<w:style w:type="table" w:styleId="TabloKilavuzu"><w:tblPr><w:tblBorders><w:top w:val="single"/><w:left w:val="single"/><w:bottom w:val="single"/><w:right w:val="single"/><w:insideH w:val="single"/><w:insideV w:val="single"/></w:tblBorders></w:tblPr></w:style></w:styles>"#
+    );
+    let numbering = format!(
+        r#"<w:numbering {W}><w:abstractNum w:abstractNumId="0">
+<w:lvl w:ilvl="0"><w:start w:val="1"/><w:numFmt w:val="decimal"/><w:lvlText w:val="%1."/><w:pPr><w:ind w:left="720" w:hanging="360"/></w:pPr></w:lvl>
+<w:lvl w:ilvl="1"><w:start w:val="1"/><w:numFmt w:val="lowerLetter"/><w:lvlText w:val="%2)"/><w:pPr><w:ind w:left="1440" w:hanging="360"/></w:pPr></w:lvl>
+</w:abstractNum><w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num></w:numbering>"#
+    );
+    let header = format!(
+        r#"<w:hdr {W}><w:p><w:pPr><w:jc w:val="right"/></w:pPr><w:r><w:t xml:space="preserve">Sayfa </w:t></w:r><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText> PAGE </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>1</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r><w:r><w:t xml:space="preserve"> / </w:t></w:r><w:fldSimple w:instr=" NUMPAGES "><w:r><w:t>2</w:t></w:r></w:fldSimple></w:p></w:hdr>"#
+    );
+    let footnotes = format!(r#"<w:footnotes {W}><w:footnote w:id="2"><w:p><w:r><w:footnoteRef/></w:r><w:r><w:t xml:space="preserve"> Dipnot metni.</w:t></w:r></w:p></w:footnote></w:footnotes>"#);
+    let rels = r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rIdH" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/header" Target="header1.xml"/></Relationships>"#;
+    docx(&[
+        ("word/document.xml", &document),
+        ("word/styles.xml", &styles),
+        ("word/numbering.xml", &numbering),
+        ("word/header1.xml", &header),
+        ("word/footnotes.xml", &footnotes),
+        ("word/_rels/document.xml.rels", rels),
+    ])
+}
+
+#[test]
+fn word_reader_keeps_text_lists_tables_and_page_numbers() {
+    let xml = crate::word::docx_to_content_xml(&sample_docx()).unwrap();
+    let doc = udf::parse_xml(&xml).unwrap();
+    let html = udf::body_html(&doc);
+    // Numbering: Word's own rules (decimal, then English letters).
+    for text in ["DİLEKÇE", "1.\tBirinci", "a)\tAlt", "2.\tİkinci", "Birleşik", "İçindekiler", "Dipnot metni."] {
+        assert!(xml.contains(text), "{text} eksik");
+    }
+    assert!(html.contains("<table"), "tablo");
+    assert!(html.contains("colspan=\"2\""), "birleşik hücre");
+    assert!(html.contains("break-before:page"), "sayfa sonu");
+    assert!(xml.contains("pageNumber-spec=\"BSP32_2120\""), "sağa hizalı sayfa/toplam: {}", &xml[xml.find("<header").unwrap()..][..300]);
+    assert!(xml.contains("pageNumber-foreStr=\"Sayfa \"") || xml.contains("pageNumber-foreStr=\"Sayfa\""));
+    assert!(xml.contains("border=\"borderCell\""));
+    assert!(xml.contains("Alignment=\"1\""), "ortalanmış başlık");
+    assert!(xml.contains(":1:1"), "noktalı sağ sekme");
+    assert!(xml.contains("foreground=\"-65536\""), "kırmızı yazı");
+    assert!(xml.contains("superscript=\"true\""), "dipnot işareti");
+}
+
+#[test]
+fn word_reader_round_trips_our_own_docx() {
+    let original = udf::parse_file(&fixture()).unwrap();
+    let bytes = udf::docx::to_docx(&[original]).unwrap();
+    let xml = crate::word::docx_to_content_xml(&bytes).unwrap();
+    let back = udf::parse_xml(&xml).unwrap();
+    let html = udf::body_html(&back);
+    assert!(html.contains("MAHKEMES"));
+    assert!(html.contains("Tablo hücresi metni"));
+    assert!(xml.contains("bgImageData"), "antet arka plan olarak korunmalı");
+    assert!(xml.contains("<footer") && xml.contains("pageNumber-spec"), "sayfa numarası");
+}
+
+#[test]
+fn word_reader_rejects_non_docx() {
+    assert!(crate::word::docx_to_content_xml(b"not a zip").is_err());
+    let empty = docx(&[("hello.txt", "x")]);
+    assert!(crate::word::docx_to_content_xml(&empty).is_err());
+}
+
+#[test]
+fn office_file_kinds() {
+    use crate::office::{is_builtin, is_office, kind, Kind};
+    assert!(is_office(Path::new("a.DOCX")) && is_office(Path::new("b.xls")) && is_office(Path::new("c.pptx")));
+    assert!(!is_office(Path::new("d.pdf")) && !is_office(Path::new("e.udf")));
+    assert!(is_builtin(Path::new("a.docx")) && !is_builtin(Path::new("a.doc")));
+    assert_eq!(kind(Path::new("x.ods")), Some(Kind::Excel));
+    assert_eq!(kind(Path::new("x.odp")), Some(Kind::PowerPoint));
+}

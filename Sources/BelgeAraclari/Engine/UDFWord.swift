@@ -1,29 +1,12 @@
 import Foundation
 
-/// UDF → Word (.docx). The writer lives in the shared Rust core (`core/`), which the build script
-/// bundles next to the app executable as `belge-core`; Windows links the same code directly.
+/// UDF → Word (.docx), written by the shared Rust core ([BelgeCore]).
 enum UDFWord {
-    static func tool() throws -> URL {
-        guard let url = Bundle.main.url(forAuxiliaryExecutable: "belge-core") else {
-            throw AppError.message("Word dönüştürücüsü uygulama paketinde bulunamadı. Uygulamayı yeniden yükleyin.")
-        }
-        return url
-    }
-
     /// Writes `urls` into `output` (several inputs become one document, one section each).
     static func write(_ urls: [URL], to output: URL) throws {
-        let process = Process()
-        process.executableURL = try tool()
-        process.arguments = ["udf-to-docx", output.path] + urls.map(\.path)
-        let errors = Pipe()
-        process.standardError = errors
-        process.standardOutput = FileHandle.nullDevice
-        try process.run()
-        let message = errors.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        guard process.terminationStatus == 0 else {
-            let text = String(decoding: message, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
-            throw AppError.message(text.isEmpty ? "\"\(output.lastPathComponent)\" oluşturulamadı." : text)
+        let result = try BelgeCore.run(["udf-to-docx", output.path] + urls.map(\.path))
+        guard result.status == 0 else {
+            throw AppError.message(result.stderr.isEmpty ? "\"\(output.lastPathComponent)\" oluşturulamadı." : result.stderr)
         }
     }
 

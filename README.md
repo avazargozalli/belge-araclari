@@ -33,6 +33,8 @@
 
 | Araç | Ne yapar |
 |---|---|
+| **PDF'e Dönüştür** | Word, Excel, PowerPoint, UDF, resim (JPG, PNG, TIFF…) ve PDF dosyalarını **karışık olarak tek ekrana bırakın**; her birini ayrı PDF yapın veya listedeki sırayla **tek PDF'te birleştirin**. |
+| **Office'ten PDF'e** | Word (.docx, .doc, .rtf, .odt), Excel (.xlsx, .xls, .ods, .csv) ve PowerPoint (.pptx, .ppt, .odp) dosyalarını PDF'e çevirir; isterseniz tek PDF'te birleştirir. |
 | **PDF Küçült** | Makul / Daha Küçük / En Küçük seviyeleri. Metin seçilebilir kalır. Taranmış belgeler için ayrıca "taranmış belge modu". Birden fazla dosyayı tek seferde işler. |
 | **UDF Dönüştür** | UYAP belgelerini (.udf) biçimini koruyarak **PDF'e veya Word'e (.docx)** çevirir. Birden fazla UDF'yi sürükleyerek sıralayıp tek PDF'te veya tek Word belgesinde birleştirebilirsiniz. Yazı tipi, kalın/italik/altı çizili, hizalama, girintiler, sekmeler, numaralı listeler, tablolar, resimler, antetli kağıt (arka plan), üst/alt bilgi ve sayfa numaraları korunur; metin seçilebilir kalır. |
 | **Resimden PDF'e** | JPG, PNG, WEBP, HEIC, TIFF (çok sayfalı), GIF, BMP → tek PDF. Sayfa boyutu (A4, A5, Letter, Legal, resme göre), yönlendirme, kenar boşluğu ve kalite ayarı. Sürükleyerek sıralama. |
@@ -70,6 +72,13 @@ Liste numaraları UYAP'taki gibi metin olarak yazılır: Word'ün harfli numaral
 Word yazıcısı her iki platformun ortak kullandığı Rust çekirdeğindedir (`core/`): Windows sürümü bunu doğrudan içerir, macOS sürümü ise uygulama paketinde `belge-core` adlı küçük bir komut satırı aracı olarak taşır.
 
 **Teşekkür:** UYAP Doküman Editörü'nün bazı öznitelikleri nasıl yorumladığına dair bilgiler (sayfa numarası bitleri, alt düzey liste biçimleri, harfli listelerin Türk alfabesiyle sayılması, tablo sütun oranları ve kenarlık türleri, sekme dolguları), Av. Arb. Mevlana İbrahim Asım Bilir'in [UDF Çevirici](https://github.com/miasimbilir/udf-cevirici) projesinin belgelerinden öğrenilmiştir. O projenin kodu kullanılmamıştır; uygulama bu bilgilerle bağımsız olarak yazılmıştır.
+
+### Office dosyaları nasıl çevrilir?
+
+Office'in görünümünü birebir çizebilen, uygulamaya gömülebilecek kadar küçük bir motor yoktur. Bu yüzden iki yol birlikte kullanılır, ikisi de tamamen çevrimdışıdır:
+
+- **Bilgisayarda Microsoft Office veya LibreOffice varsa** dosya onunla açılıp PDF'e aktarılır; sonuç Office'te yazdırdığınızla aynıdır. Excel, PowerPoint ve eski .doc/.xls/.ppt dosyaları bu yolla çevrilir. macOS'ta ilk seferde sistem, Belge Araçları'nın Word/Excel/PowerPoint'i kullanmasına izin vermenizi ister. Bu, Ayarlar'dan kapatılabilir.
+- **Hiçbiri yoksa** Word (.docx) dosyaları yerleşik dönüştürücüyle çevrilir: belge Word'ün kurallarıyla (stiller, numaralandırma, sekmeler, tablolar, resimler, üst/alt bilgi, sayfa numarası, sayfa sonları) okunup UDF'teki gibi PDF'e dizilir. Dipnotlar belgenin sonuna taşınır; çok bölümlü belgelerde son bölümün sayfa düzeni kullanılır. Office'te bulunan ama bilgisayarda olmayan yazı tipleri (ör. Calibri) benzer bir yazı tipiyle değiştirilir.
 
 ### PDF küçültme nasıl çalışır?
 
@@ -139,6 +148,7 @@ Sources/BelgeAraclari/
     Support.swift            Dosya, çıktı ve görsel yardımcıları
     UDF.swift                UDF okuma ve TextKit ile PDF'e dizme
     UDFWord.swift            UDF → Word (paketteki belge-core aracını çalıştırır)
+    DocumentConverter.swift  Karışık dosyaları ve Office belgelerini PDF'e çevirme
   Models/                    Uygulama durumu ve araç modelleri
   Views/                     SwiftUI arayüzü
 Scripts/
@@ -146,9 +156,12 @@ Scripts/
   make_icon.swift            Uygulama ikonunu çizer
 core/                        Ortak Rust çekirdeği: UDF okuyucu, HTML ve Word (.docx) yazıcıları
   src/udf/docx.rs            UDF → Word
+  src/word.rs                Yerleşik Word (.docx) okuyucu
+  src/office.rs              Kurulu Microsoft Office / LibreOffice ile PDF'e çevirme
 windows/                     Windows sürümü (Tauri 2)
   src-tauri/src/engine/      PDF motoru (Rust, lopdf): küçült, resimden PDF, UDF, birleştir, böl, şifrele
   src-tauri/src/udf_print.rs UDF'yi WebView2 ile PDF'e yazdırma
+  src-tauri/src/convert.rs   Karışık dosyaları ve Office belgelerini PDF'e çevirme
   tests/fixtures/            Örnek (gerçek veri içermeyen) UDF test dosyası
   src-tauri/src/lib.rs       Arayüz ile motor arasındaki komutlar
   ui/                        Arayüz (HTML/CSS/JS); sayfa görüntüleme için yerel pdf.js

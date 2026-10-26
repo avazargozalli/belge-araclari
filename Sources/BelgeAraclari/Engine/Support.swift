@@ -35,10 +35,20 @@ enum FileTypes {
     static let images: [UTType] = [.jpeg, .png, .webP, .heic, .heif, .tiff, .gif, .bmp]
     static let udf: [UTType] = [UTType(filenameExtension: "udf") ?? .data]
     static let imageExtensions: Set<String> = ["jpg", "jpeg", "png", "webp", "heic", "heif", "tif", "tiff", "gif", "bmp"]
+    /// Word, Excel, PowerPoint and OpenDocument files (same list as the shared core).
+    static let officeExtensions: [String] = ["doc", "docx", "docm", "dot", "dotx", "dotm", "rtf", "odt", "ott", "wpd",
+                                             "xls", "xlsx", "xlsm", "xlsb", "xlt", "xltx", "ods", "ots", "csv",
+                                             "ppt", "pptx", "pptm", "pps", "ppsx", "pot", "potx", "odp", "otp"]
+    static let office: [UTType] = officeExtensions.compactMap { UTType(filenameExtension: $0) }
+    static let convertible: [UTType] = pdf + images + udf + office
 
     static func isPDF(_ url: URL) -> Bool { url.pathExtension.lowercased() == "pdf" }
     static func isImage(_ url: URL) -> Bool { imageExtensions.contains(url.pathExtension.lowercased()) }
     static func isUDF(_ url: URL) -> Bool { url.pathExtension.lowercased() == "udf" }
+    static func isOffice(_ url: URL) -> Bool { officeExtensions.contains(url.pathExtension.lowercased()) }
+    /// .docx files the built-in converter can read without an office suite.
+    static func isBuiltinWord(_ url: URL) -> Bool { ["docx", "docm", "dotx", "dotm"].contains(url.pathExtension.lowercased()) }
+    static func isConvertible(_ url: URL) -> Bool { isPDF(url) || isImage(url) || isUDF(url) || isOffice(url) }
 
     /// Replaces dropped folders with the files they contain (one level, name-sorted).
     static func expand(_ urls: [URL]) -> [URL] {
@@ -62,6 +72,7 @@ enum SettingsKey {
     static let outputMode = "outputMode"          // 0: next to original, 1: chosen folder
     static let outputFolder = "outputFolder"
     static let useGhostscript = "useGhostscript"
+    static let useInstalledOffice = "useInstalledOffice"  // Microsoft Office / LibreOffice for office files
 }
 
 enum Output {
