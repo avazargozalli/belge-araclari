@@ -98,6 +98,8 @@ struct ImagesView: View {
                         .textFieldStyle(.roundedBorder).frame(maxWidth: 300)
                     Text(".pdf").foregroundStyle(.secondary)
                 }
+                Divider()
+                PageNumberOptions(numbering: $model.numbering, tint: tool.tint)
             }
             .card()
 
@@ -152,6 +154,9 @@ struct ConvertView: View {
                         Text(".pdf").foregroundStyle(.secondary)
                     }
                 }
+                Divider()
+                PageNumberOptions(numbering: $model.numbering, tint: tool.tint)
+                Divider()
                 if model.hasImages {
                     OptionRow(label: "Resim sayfaları") {
                         Picker("", selection: $model.imagePage) {
@@ -258,6 +263,10 @@ struct UDFView: View {
                         Text(word ? ".docx" : ".pdf").foregroundStyle(.secondary)
                     }
                 }
+                if !word {
+                    Divider()
+                    PageNumberOptions(numbering: $model.numbering, tint: tool.tint)
+                }
                 Banner(text: word
                        ? "Word'de düzenlenebilir belge oluşur: yazı tipleri, hizalama, girintiler, sekmeler, tablolar, resimler, üst/alt bilgi ve canlı sayfa numaraları korunur; antet her sayfada metnin arkasında durur. Liste numaraları UYAP'taki gibi (a, b, c, ç…) metin olarak yazılır. Satır kırılımları Word'ün yazı ölçülerine göre biraz değişebilir."
                        : "Yazı tipi, kalın/italik/altı çizili metin, hizalama, girintiler, sekmeler, tablolar, antetli kağıt (arka plan), üst/alt bilgi ve sayfa numaraları korunur. Metin PDF'te seçilebilir kalır.")
@@ -293,6 +302,8 @@ struct MergeView: View {
                         .textFieldStyle(.roundedBorder).frame(maxWidth: 300)
                     Text(".pdf").foregroundStyle(.secondary)
                 }
+                Divider()
+                PageNumberOptions(numbering: $model.numbering, tint: tool.tint)
             }
             .card()
 

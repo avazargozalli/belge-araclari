@@ -45,6 +45,8 @@
 | **PDF'ten Resme** | Sayfaları 72 / 150 / 300 DPI PNG veya JPEG olarak kaydeder. |
 | **PDF Şifrele** | Açılış şifresi ekler veya bildiğiniz şifreyi kaldırır. |
 
+**Sayfa numarası ekle:** PDF üreten her araçta (PDF'e Dönüştür, Office'ten PDF'e, Resimden PDF'e, UDF Dönüştür, PDF Birleştir) çıkan PDF'in her sayfasına sırayla numara eklenebilir. Konum (sol/orta/sağ, üst/alt) ve biçim ("1", "1 / 12", "Sayfa 1", "Sayfa 1 / 12", "- 1 -") seçilir; birleştirilen PDF'te numaralar baştan sona kesintisiz devam eder, döndürülmüş sayfalarda da doğru köşeye düz yazılır. Orijinal PDF'ler hiçbir zaman değiştirilmez; numara yeni dosyaya eklenir.
+
 - Giriş ekranı veya hesap yoktur; uygulama açılınca doğrudan çalışır.
 - **Ağ kodu yoktur.** Hiçbir veri internete gönderilmez veya internetten alınmaz.
 - Orijinal dosyalar hiçbir zaman değiştirilmez veya üzerine yazılmaz. Yeni dosyalar orijinalin yanına (veya Ayarlar'da seçtiğiniz klasöre) kaydedilir.

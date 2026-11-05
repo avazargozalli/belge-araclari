@@ -50,6 +50,21 @@ fn main() -> ExitCode {
                 }
             }
         }
+        // number-pages <file.pdf> <bottom-right|top-left|…> <n|n/N|sayfa-n|sayfa-n/N|dash> [start]
+        [command, file, position, format, rest @ ..] if command == "number-pages" && rest.len() <= 1 => {
+            let start = rest.first().and_then(|s| s.parse().ok()).unwrap_or(1);
+            let Some(numbering) = belge_core::pdf::numbers::Numbering::parse(position, format, start) else {
+                eprintln!("Sayfa numarası konumu veya biçimi anlaşılamadı.");
+                return ExitCode::from(2);
+            };
+            match belge_core::pdf::numbers::stamp(&PathBuf::from(file), &numbering) {
+                Ok(_) => ExitCode::SUCCESS,
+                Err(e) => {
+                    eprintln!("{e}");
+                    ExitCode::FAILURE
+                }
+            }
+        }
         [command, input, output] if command == "docx-to-udf" => match belge_core::word::docx_to_udf(&PathBuf::from(input), &PathBuf::from(output)) {
             Ok(()) => ExitCode::SUCCESS,
             Err(e) => {
@@ -105,7 +120,7 @@ fn main() -> ExitCode {
             ExitCode::SUCCESS
         }
         _ => {
-            eprintln!("Kullanım:\n  belge-core udf-to-docx <çıktı.docx> <girdi.udf>…\n  belge-core docx-to-udf <girdi.docx> <çıktı.udf>\n  belge-core to-udf <girdi.pdf|.docx|.doc> <çıktı.udf> [--no-office]\n  belge-core office-to-pdf <girdi> <çıktı.pdf>\n  belge-core office-engines");
+            eprintln!("Kullanım:\n  belge-core udf-to-docx <çıktı.docx> <girdi.udf>…\n  belge-core docx-to-udf <girdi.docx> <çıktı.udf>\n  belge-core to-udf <girdi.pdf|.docx|.doc> <çıktı.udf> [--no-office]\n  belge-core number-pages <dosya.pdf> <bottom-right|…> <n|n/N|sayfa-n|sayfa-n/N|dash> [başlangıç]\n  belge-core office-to-pdf <girdi> <çıktı.pdf>\n  belge-core office-engines");
             ExitCode::from(2)
         }
     }

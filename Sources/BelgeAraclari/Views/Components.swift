@@ -509,3 +509,88 @@ struct ResultRow: View {
         .padding(.vertical, 12)
     }
 }
+
+// MARK: - Page numbers
+
+/// "Sayfa numarası ekle": a switch, the corner on a little page, and the format.
+struct PageNumberOptions: View {
+    @Binding var numbering: PageNumbering
+    let tint: Color
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Toggle(isOn: $numbering.enabled) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Sayfa numarası ekle").fontWeight(.medium)
+                    Text(numbering.enabled ? "Çıkan PDF'in her sayfasına sırayla numara yazılır." : "Sayfalar numarasız kalır.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            .toggleStyle(.switch)
+            .tint(tint)
+
+            if numbering.enabled {
+                HStack(alignment: .top, spacing: 24) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Konum").font(.caption).foregroundStyle(.secondary)
+                        PositionPicker(position: $numbering.position, tint: tint)
+                    }
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Biçim").font(.caption).foregroundStyle(.secondary)
+                        Picker("Biçim", selection: $numbering.format) {
+                            ForEach(PageNumbering.Format.allCases, id: \.self) { Text($0.title).tag($0) }
+                        }
+                        .labelsHidden()
+                        .frame(width: 150)
+                        Text(numbering.position.title).font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+                .transition(.opacity)
+            }
+        }
+        .animation(.snappy, value: numbering.enabled)
+    }
+}
+
+/// A small page with six spots to click: top and bottom, left, centre and right.
+private struct PositionPicker: View {
+    @Binding var position: PageNumbering.Position
+    let tint: Color
+
+    var body: some View {
+        let rows: [[PageNumbering.Position]] = [[.topLeft, .topCenter, .topRight], [.bottomLeft, .bottomCenter, .bottomRight]]
+        VStack(spacing: 0) {
+            ForEach(0..<2, id: \.self) { r in
+                if r == 1 {
+                    // The page's text between the top and bottom rows.
+                    VStack(spacing: 4) {
+                        ForEach(0..<4, id: \.self) { _ in
+                            Capsule().fill(Color.secondary.opacity(0.25)).frame(height: 3)
+                        }
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                }
+                HStack(spacing: 0) {
+                    ForEach(rows[r], id: \.self) { p in
+                        Button {
+                            position = p
+                        } label: {
+                            Circle()
+                                .fill(position == p ? tint : Color.secondary.opacity(0.3))
+                                .frame(width: 10, height: 10)
+                                .frame(maxWidth: .infinity, minHeight: 22)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .help(p.title)
+                        .accessibilityLabel(p.title)
+                    }
+                }
+            }
+        }
+        .frame(width: 96, height: 112)
+        .background(RoundedRectangle(cornerRadius: 4).fill(Color(nsColor: .textBackgroundColor)))
+        .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(Color.secondary.opacity(0.4)))
+    }
+}

@@ -279,3 +279,57 @@ fn pages_as_pictures_make_one_page_each() {
     assert_eq!(xml.matches("<image ").count(), 2);
     assert_eq!(xml.matches("<page-break>").count(), 1);
 }
+
+// MARK: - Page numbers
+
+fn numbered(rotate: i64, position: &str, format: &str) -> crate::pdf::read::Page {
+    use lopdf::Object;
+    let mut doc = lopdf::Document::load_mem(&sample_pdf()).unwrap();
+    if rotate != 0 {
+        let (_, page) = doc.get_pages().into_iter().next().unwrap();
+        doc.get_dictionary_mut(page).unwrap().set("Rotate", Object::Integer(rotate));
+    }
+    let n = crate::pdf::numbers::Numbering::parse(position, format, 1).unwrap();
+    crate::pdf::numbers::stamp_document(&mut doc, &n).unwrap();
+    let mut out = vec![];
+    doc.save_to(&mut out).unwrap();
+    crate::pdf::read::read(&out).unwrap().remove(0)
+}
+
+fn text_near(page: &crate::pdf::read::Page, x: std::ops::Range<f32>, y: std::ops::Range<f32>) -> String {
+    page.glyphs.iter().filter(|g| x.contains(&g.x) && y.contains(&g.y)).map(|g| g.ch).collect()
+}
+
+#[test]
+fn page_numbers_land_in_the_chosen_corner() {
+    // A4 portrait: bottom right is near x 560, y 818 (top-down coordinates).
+    let page = numbered(0, "bottom-right", "sayfa-n/N");
+    assert_eq!(text_near(&page, 470.0..575.0, 810.0..825.0), "Sayfa 1 / 1");
+    let page = numbered(0, "top-center", "dash");
+    assert_eq!(text_near(&page, 270.0..330.0, 25.0..40.0), "- 1 -");
+    // The original text is untouched.
+    assert!(page.glyphs.iter().any(|g| g.ch == 'D'));
+}
+
+#[test]
+fn page_numbers_follow_page_rotation() {
+    // Rotated 90°: the number is written along the page's y axis, so the reader (which works in
+    // page space) sees no horizontal glyphs for it, but the content stream holds it.
+    let mut doc = lopdf::Document::load_mem(&sample_pdf()).unwrap();
+    let (_, page) = doc.get_pages().into_iter().next().unwrap();
+    doc.get_dictionary_mut(page).unwrap().set("Rotate", lopdf::Object::Integer(90));
+    let n = crate::pdf::numbers::Numbering::parse("bottom-right", "n", 1).unwrap();
+    crate::pdf::numbers::stamp_document(&mut doc, &n).unwrap();
+    let content = String::from_utf8_lossy(&doc.get_page_content(page).unwrap()).into_owned();
+    // Visual bottom-right of a page turned 90° clockwise is the page's top-right corner.
+    assert!(content.contains("0.000 1.000 -1.000 0.000 571.000"), "{content}");
+    assert!(content.starts_with("q\n") && content.contains("cm 1 1 1 rg") && content.contains("BT /BelgeNo"));
+    let _ = numbered(180, "bottom-left", "n");
+}
+
+#[test]
+fn page_number_texts() {
+    let n = crate::pdf::numbers::Numbering::parse("bottom-center", "sayfa-n/N", 3).unwrap();
+    assert_eq!(n.text(3, 12), "Sayfa 3 / 12");
+    assert!(crate::pdf::numbers::Numbering::parse("middle", "n", 1).is_none());
+}

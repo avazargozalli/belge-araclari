@@ -7,6 +7,7 @@
 //! letterhead. Pages without text (scans) become pictures. Everything is written through
 //! [`crate::udfout`], so the result follows the Editör's rules.
 
+pub mod numbers;
 pub mod read;
 
 use std::collections::HashMap;

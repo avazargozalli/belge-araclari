@@ -47,6 +47,7 @@ const LEVELS = [
 // MARK: - State
 
 const newJob = () => ({ id: null, running: false, progress: 0, status: '', results: [], error: null });
+const newNumbering = () => ({ enabled: false, position: 'bottom-right', format: 'sayfa-n/N' });
 
 function loadSettings() {
   const defaults = { outMode: 'next', outDir: '', useGs: true, useOffice: true };
@@ -58,13 +59,13 @@ const state = {
   view: 'home',
   settings: loadSettings(),
   tools: {
-    convert: { files: [], merge: false, name: '', imagePage: 'a4', job: newJob() },
-    office: { files: [], merge: false, name: '', imagePage: 'a4', job: newJob() },
+    convert: { files: [], merge: false, name: '', imagePage: 'a4', numbering: newNumbering(), job: newJob() },
+    office: { files: [], merge: false, name: '', imagePage: 'a4', numbering: newNumbering(), job: newJob() },
     toUdf: { files: [], pdfMode: 'text', job: newJob() },
     compress: { files: [], level: 'balanced', scan: false, job: newJob() },
-    images: { files: [], options: { pageSize: 'a4', orientation: 'auto', margin: 'none', quality: 'balanced' }, name: '', job: newJob() },
-    udf: { files: [], format: 'pdf', merge: true, name: '', job: newJob() },
-    merge: { files: [], name: 'Birleştirilmiş belge', job: newJob() },
+    images: { files: [], options: { pageSize: 'a4', orientation: 'auto', margin: 'none', quality: 'balanced' }, name: '', numbering: newNumbering(), job: newJob() },
+    udf: { files: [], format: 'pdf', merge: true, name: '', numbering: newNumbering(), job: newJob() },
+    merge: { files: [], name: 'Birleştirilmiş belge', numbering: newNumbering(), job: newJob() },
     split: { files: [], mode: 'each', ranges: '', separate: false, every: 2, job: newJob() },
     organize: { file: null, doc: null, pages: [], selected: new Set(), original: 0, error: null, job: newJob() },
     pdfToImages: { files: [], format: 'png', dpi: 150, job: newJob() },
@@ -176,7 +177,7 @@ function runConvert(id) {
   const t = state.tools[id];
   runJob(id, (job) => invoke('convert_to_pdf', {
     job: job.id, paths: t.files.map((f) => f.path), merge: t.merge, name: t.name, imagePage: t.imagePage,
-    useOffice: state.settings.useOffice, outDir: outDir(),
+    useOffice: state.settings.useOffice, numbers: numbersArg(t), outDir: outDir(),
   }));
 }
 
@@ -266,17 +267,17 @@ const actions = {
 
   udf() {
     const t = state.tools.udf;
-    runJob('udf', (job) => invoke(t.format === 'docx' ? 'udf_to_docx' : 'udf_to_pdf', { job: job.id, paths: t.files.map((f) => f.path), merge: t.merge, name: t.name, outDir: outDir() }));
+    runJob('udf', (job) => invoke(t.format === 'docx' ? 'udf_to_docx' : 'udf_to_pdf', { job: job.id, paths: t.files.map((f) => f.path), merge: t.merge, name: t.name, numbers: numbersArg(t), outDir: outDir() }));
   },
 
   images() {
     const t = state.tools.images;
-    runJob('images', (job) => invoke('images_to_pdf', { job: job.id, paths: t.files.map((f) => f.path), options: t.options, name: t.name, outDir: outDir() }));
+    runJob('images', (job) => invoke('images_to_pdf', { job: job.id, paths: t.files.map((f) => f.path), options: t.options, name: t.name, numbers: numbersArg(t), outDir: outDir() }));
   },
 
   merge() {
     const t = state.tools.merge;
-    runJob('merge', (job) => invoke('merge', { job: job.id, paths: t.files.map((f) => f.path), name: t.name, outDir: outDir() }));
+    runJob('merge', (job) => invoke('merge', { job: job.id, paths: t.files.map((f) => f.path), name: t.name, numbers: numbersArg(t), outDir: outDir() }));
   },
 
   split() {
@@ -472,6 +473,35 @@ function filePicker(toolId, { title, text, listTitle, sortable }) {
     dropzone({ title: multiple ? 'Daha fazla ekle' : 'Başka bir dosya seç', text: 'Sürükleyip bırakın veya tıklayın', kind: tool.accepts, compact: true, multiple });
 }
 
+const NUMBER_FORMATS = [['n', '1'], ['n/N', '1 / 12'], ['sayfa-n', 'Sayfa 1'], ['sayfa-n/N', 'Sayfa 1 / 12'], ['dash', '- 1 -']];
+const NUMBER_POSITIONS = { 'top-left': 'Sol üst', 'top-center': 'Orta üst', 'top-right': 'Sağ üst', 'bottom-left': 'Sol alt', 'bottom-center': 'Orta alt', 'bottom-right': 'Sağ alt' };
+/** The page-number choice for a command, or null when switched off. */
+const numbersArg = (t) => (t.numbering?.enabled ? { position: t.numbering.position, format: t.numbering.format } : null);
+
+/** "Sayfa numarası ekle": a switch, the corner on a little page, and the format. */
+function numberingOptions(t) {
+  const n = t.numbering;
+  const spot = (p) => `<button type="button" class="spot ${n.position === p ? 'on' : ''}" data-action="set" data-key="numbering.position" data-value="${p}" title="${NUMBER_POSITIONS[p]}" aria-label="${NUMBER_POSITIONS[p]}"><i></i></button>`;
+  return `
+    <label class="toggle">
+      <span><strong>Sayfa numarası ekle</strong><span>${n.enabled ? 'Çıkan PDF\'in her sayfasına sırayla numara yazılır.' : 'Sayfalar numarasız kalır.'}</span></span>
+      <span class="switch"><input type="checkbox" data-bind="numbering.enabled" ${n.enabled ? 'checked' : ''}><i></i></span>
+    </label>
+    ${n.enabled ? `<div class="numbering">
+      <div><span class="label">Konum</span>
+        <div class="num-page">
+          <div class="row">${spot('top-left')}${spot('top-center')}${spot('top-right')}</div>
+          <div class="lines"><b></b><b></b><b></b><b></b></div>
+          <div class="row">${spot('bottom-left')}${spot('bottom-center')}${spot('bottom-right')}</div>
+        </div>
+      </div>
+      <div><span class="label">Biçim</span>
+        <select class="field" data-bind="numbering.format" data-rerender>${NUMBER_FORMATS.map(([v, l]) => `<option value="${v}" ${n.format === v ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>
+        <span class="muted small">${NUMBER_POSITIONS[n.position]}</span>
+      </div>
+    </div>` : ''}`;
+}
+
 const segmented = (key, value, options, disabled = false) =>
   `<div class="segmented">${options.map(([v, label]) =>
     `<button type="button" class="${String(v) === String(value) ? 'on' : ''}" data-action="set" data-key="${key}" data-value="${v}" ${disabled ? 'disabled' : ''}>${esc(label)}</button>`).join('')}</div>`;
@@ -553,6 +583,7 @@ function toolBody(id) {
           </label>
           ${t.merge && many ? `<div class="option-row"><label for="f-name">Dosya adı</label><span class="inline"><input id="f-name" class="field" type="text" data-bind="name" value="${esc(t.name)}" placeholder="${esc(baseName(t.files[0].path))}"><span class="muted">.pdf</span></span></div>` : ''}
           ${hasImages ? `<div class="option-row"><span class="label">Resim sayfaları</span>${segmented('imagePage', t.imagePage, [['a4', 'A4'], ['fit', 'Resme göre']])}</div>` : ''}
+          ${numberingOptions(t)}
           ${state.settings.useOffice
             ? banner("Office dosyaları bilgisayarda Microsoft Office veya LibreOffice varsa onunla birebir çevrilir; yoksa Word (.docx) dosyaları yerleşik dönüştürücüyle çevrilir. Hiçbir dosya internete gönderilmez.")
             : banner("Office dosyaları yalnızca yerleşik dönüştürücüyle çevrilir (Word .docx). Excel, PowerPoint ve eski biçimler için Ayarlar'dan kurulu Office kullanımını açın.")}
@@ -571,6 +602,7 @@ function toolBody(id) {
             <span class="switch"><input type="checkbox" data-bind="merge" ${t.merge ? 'checked' : ''} ${many ? '' : 'disabled'}><i></i></span>
           </label>
           ${t.merge && many ? `<div class="option-row"><label for="f-name">Dosya adı</label><span class="inline"><input id="f-name" class="field" type="text" data-bind="name" value="${esc(t.name)}" placeholder="${esc(baseName(t.files[0].path))}"><span class="muted">.${word ? 'docx' : 'pdf'}</span></span></div>` : ''}
+          ${word ? '' : numberingOptions(t)}
           ${word
             ? banner("Word'de düzenlenebilir belge oluşur: yazı tipleri, hizalama, girintiler, sekmeler, tablolar, resimler, üst/alt bilgi ve canlı sayfa numaraları korunur; antet her sayfada metnin arkasında durur. Liste numaraları UYAP'taki gibi (a, b, c, ç…) metin olarak yazılır. Satır kırılımları Word'ün yazı ölçülerine göre biraz değişebilir.")
             : banner("Yazı tipi, kalın/italik/altı çizili metin, hizalama, girintiler, sekmeler, tablolar, antetli kağıt (arka plan), üst/alt bilgi ve sayfa numaraları korunur. Metin PDF'te seçilebilir kalır.")}
@@ -586,6 +618,7 @@ function toolBody(id) {
           <div class="option-row"><span class="label">Kenar boşluğu</span>${segmented('options.margin', o.margin, [['none', 'Yok'], ['small', 'Dar'], ['normal', 'Normal']])}</div>
           <div class="option-row"><span class="label">Görüntü kalitesi</span>${segmented('options.quality', o.quality, [['original', 'Orijinal'], ['high', 'Yüksek'], ['balanced', 'Dengeli'], ['small', 'Küçük dosya']])}</div>
           <div class="option-row"><label for="f-name">Dosya adı</label><span class="inline"><input id="f-name" class="field" type="text" data-bind="name" value="${esc(t.name)}" placeholder="${esc(t.files[0] ? baseName(t.files[0].path) : 'Belge')}"><span class="muted">.pdf</span></span></div>
+          ${numberingOptions(t)}
           ${banner('HEIC fotoğrafları için önce JPG olarak dışa aktarın (Fotoğraflar uygulamasında "Farklı kaydet").')}
         </div>`;
     }
@@ -594,6 +627,7 @@ function toolBody(id) {
         <div class="card pad">
           <p class="eyebrow">Çıktı</p>
           <div class="option-row"><label for="f-name">Dosya adı</label><span class="inline"><input id="f-name" class="field" type="text" data-bind="name" value="${esc(t.name)}" placeholder="Birleştirilmiş belge"><span class="muted">.pdf</span></span></div>
+          ${numberingOptions(t)}
         </div>`;
     case 'split': {
       let body;
@@ -956,7 +990,9 @@ main.addEventListener('input', (event) => {
   if (!key) return;
   const t = state.tools[state.view];
   const input = event.target;
-  t[key] = input.type === 'checkbox' ? input.checked : input.type === 'number' ? Number(input.value) : input.value;
+  const keys = key.split('.');
+  const target = keys.length > 1 ? t[keys[0]] : t;
+  target[keys[keys.length - 1]] = input.type === 'checkbox' ? input.checked : input.type === 'number' ? Number(input.value) : input.value;
   if (input.type === 'checkbox' || input.dataset.rerender !== undefined) render(); else refreshBar();
 });
 

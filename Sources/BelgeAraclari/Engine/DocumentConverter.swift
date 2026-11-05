@@ -55,7 +55,7 @@ enum DocumentConverter {
     }
 
     static func convert(_ urls: [URL], merge: Bool, mergedName: String, imagePage: PageSize, useInstalled: Bool,
-                        progress: ProgressReporter) throws -> [ResultItem] {
+                        numbering: PageNumbering = PageNumbering(), progress: ProgressReporter) throws -> [ResultItem] {
         let temp = try Output.tempDirectory()
         defer { try? FileManager.default.removeItem(at: temp) }
         var results: [ResultItem] = []
@@ -67,8 +67,14 @@ enum DocumentConverter {
                     let out = temp.appendingPathComponent("\(i).pdf")
                     try pdf(url, to: out, imagePage: imagePage, useInstalled: useInstalled)
                     parts.append(out)
-                } else if FileTypes.isPDF(url) {
+                } else if FileTypes.isPDF(url) && !numbering.enabled {
                     results.append(ResultItem(title: url.lastPathComponent, detail: "Zaten PDF; olduğu gibi bırakıldı.", url: url))
+                } else if FileTypes.isPDF(url) {
+                    // The original is never changed: the numbered PDF is a copy.
+                    let out = Output.uniqueFile(in: Output.directory(for: url), base: Output.baseName(url) + " - numaralı", ext: "pdf")
+                    try FileManager.default.copyItem(at: url, to: out)
+                    let pages = CGPDFDocument(out as CFURL)?.numberOfPages ?? 0
+                    results.append(ResultItem(title: out.lastPathComponent, detail: "\(pages) sayfa · \(formatBytes(fileSize(out)))", url: out))
                 } else {
                     let out = Output.uniqueFile(in: Output.directory(for: url), base: Output.baseName(url), ext: "pdf")
                     let how = try pdf(url, to: out, imagePage: imagePage, useInstalled: useInstalled)
@@ -82,7 +88,7 @@ enum DocumentConverter {
             }
         }
         if merge, let first = urls.first {
-            guard !parts.isEmpty else { return results }
+            guard !parts.isEmpty else { return numbering.apply(results, skip: Set(urls)) }
             let name = mergedName.trimmingCharacters(in: .whitespaces).isEmpty ? Output.baseName(first) : mergedName
             let out = Output.uniqueFile(in: Output.directory(for: first), base: name, ext: "pdf")
             progress(0.95, "Birleştiriliyor…")
@@ -90,6 +96,6 @@ enum DocumentConverter {
             results.insert(ResultItem(title: out.lastPathComponent,
                                       detail: "\(parts.count) dosya · \(pages) sayfa · \(formatBytes(fileSize(out)))", url: out), at: 0)
         }
-        return results
+        return numbering.apply(results, skip: Set(urls))
     }
 }

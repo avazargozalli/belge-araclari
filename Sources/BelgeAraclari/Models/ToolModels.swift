@@ -49,17 +49,18 @@ final class ImagesModel {
     let job = Job()
     var options = ImagePDFOptions()
     var outputName = ""
+    var numbering = PageNumbering()
 
     func start() {
         guard let first = store.files.first else { return }
         let urls = store.files.map(\.url)
-        let options = options
+        let options = options, numbering = numbering
         let name = outputName.trimmingCharacters(in: .whitespaces).isEmpty ? Output.baseName(first.url) : outputName
         let output = Output.uniqueFile(in: Output.directory(for: first.url), base: name, ext: "pdf")
         job.run { progress in
             let pages = try ImageToPDF.convert(urls, options: options, to: output, progress: progress)
-            return [ResultItem(title: output.lastPathComponent,
-                               detail: "\(pages) sayfa · \(formatBytes(fileSize(output)))", url: output)]
+            return numbering.apply([ResultItem(title: output.lastPathComponent,
+                                               detail: "\(pages) sayfa · \(formatBytes(fileSize(output)))", url: output)])
         }
     }
 }
@@ -73,16 +74,17 @@ final class UDFModel {
     let job = Job()
     var format = Format.pdf
     var merge = true
+    var numbering = PageNumbering()
     var outputName = ""
 
     func start() {
         let urls = store.files.map(\.url)
         let merge = merge && urls.count > 1
         let name = outputName
-        let format = format
+        let format = format, numbering = numbering
         job.run { progress in
             switch format {
-            case .pdf: try UDFRenderer.convert(urls, merge: merge, mergedName: name, progress: progress)
+            case .pdf: try numbering.apply(UDFRenderer.convert(urls, merge: merge, mergedName: name, progress: progress))
             case .docx: try UDFWord.convert(urls, merge: merge, mergedName: name, progress: progress)
             }
         }
@@ -118,6 +120,7 @@ final class ConvertModel {
     var merge = false
     var outputName = ""
     var imagePage = PageSize.a4
+    var numbering = PageNumbering()
 
     init(kind: FileStore.Kind) {
         store = FileStore(kind: kind)
@@ -128,11 +131,11 @@ final class ConvertModel {
     func start() {
         let urls = store.files.map(\.url)
         let merge = merge && urls.count > 1
-        let name = outputName, imagePage = imagePage
+        let name = outputName, imagePage = imagePage, numbering = numbering
         let useInstalled = UserDefaults.standard.object(forKey: SettingsKey.useInstalledOffice) as? Bool ?? true
         job.run { progress in
             try DocumentConverter.convert(urls, merge: merge, mergedName: name, imagePage: imagePage,
-                                          useInstalled: useInstalled, progress: progress)
+                                          useInstalled: useInstalled, numbering: numbering, progress: progress)
         }
     }
 }
@@ -143,15 +146,17 @@ final class MergeModel {
     let store = FileStore(kind: .pdf)
     let job = Job()
     var outputName = "Birleştirilmiş belge"
+    var numbering = PageNumbering()
 
     func start() {
         guard let first = store.files.first else { return }
         let urls = store.files.map(\.url)
+        let numbering = numbering
         let output = Output.uniqueFile(in: Output.directory(for: first.url), base: outputName, ext: "pdf")
         job.run { progress in
             let pages = try PDFEngine.merge(urls, to: output, progress: progress)
-            return [ResultItem(title: output.lastPathComponent,
-                               detail: "\(urls.count) dosya · \(pages) sayfa · \(formatBytes(fileSize(output)))", url: output)]
+            return numbering.apply([ResultItem(title: output.lastPathComponent,
+                                               detail: "\(urls.count) dosya · \(pages) sayfa · \(formatBytes(fileSize(output)))", url: output)])
         }
     }
 }

@@ -248,6 +248,18 @@ body.dragging .dropzone { border-color: var(--tint); background: color-mix(in sr
 /* Options */
 .option-row { display: grid; grid-template-columns: 160px 1fr; align-items: center; gap: 12px; }
 .option-row > label, .option-row > .label { color: var(--muted); }
+.numbering { display: flex; gap: 28px; align-items: flex-start; padding: 4px 0 12px; }
+.numbering .label { display: block; margin-bottom: 6px; color: var(--muted); font-size: 12px; }
+.numbering .small { display: block; margin-top: 6px; font-size: 12px; }
+.num-page { width: 96px; height: 112px; border: 1px solid color-mix(in srgb, var(--text) 25%, transparent); border-radius: 5px; background: var(--surface); display: flex; flex-direction: column; justify-content: space-between; }
+.num-page .row { display: flex; }
+.num-page .spot { flex: 1; height: 26px; border: 0; background: none; cursor: pointer; display: grid; place-items: center; padding: 0; }
+.num-page .spot i { width: 10px; height: 10px; border-radius: 50%; background: rgba(128,128,128,.35); }
+.num-page .spot.on i { background: var(--tint, var(--blue)); }
+.num-page .spot:focus-visible i { outline: 2px solid var(--blue); outline-offset: 2px; }
+.num-page .lines { display: grid; gap: 4px; padding: 0 12px; }
+.num-page .lines b { height: 3px; border-radius: 2px; background: rgba(128,128,128,.25); }
+
 .segmented {
   display: inline-flex; background: color-mix(in srgb, var(--text) 6%, transparent); border-radius: 8px; padding: 2px; gap: 2px;
   justify-self: start; flex-wrap: wrap;

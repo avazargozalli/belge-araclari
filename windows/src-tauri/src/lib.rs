@@ -60,6 +60,33 @@ impl ResultItem {
     }
 }
 
+/// "Sayfa numarası ekle" from the UI: position ("bottom-right"…) and format ("sayfa-n/N"…).
+#[derive(Deserialize, Clone)]
+struct PageNumbers {
+    position: String,
+    format: String,
+}
+
+/// Stamps page numbers onto every PDF a job made (never onto the user's originals).
+fn number_results(results: Vec<ResultItem>, numbers: &Option<PageNumbers>, originals: &[PathBuf]) -> Vec<ResultItem> {
+    let Some(n) = numbers else { return results };
+    let Some(numbering) = belge_core::pdf::numbers::Numbering::parse(&n.position, &n.format, 1) else { return results };
+    results
+        .into_iter()
+        .map(|mut item| {
+            let Some(path) = item.path.clone().map(PathBuf::from) else { return item };
+            if !item.success || !is_pdf(&path) || originals.contains(&path) {
+                return item;
+            }
+            match belge_core::pdf::numbers::stamp(&path, &numbering) {
+                Ok(_) => item.detail.push_str(" · sayfa numaralı"),
+                Err(e) => item.detail.push_str(&format!(" · {e}")),
+            }
+            item
+        })
+        .collect()
+}
+
 #[derive(Serialize, Clone)]
 struct ProgressEvent {
     job: String,
@@ -305,14 +332,14 @@ fn scan_dpi(level: Level) -> u32 {
 // MARK: - Images → PDF
 
 #[tauri::command]
-async fn images_to_pdf(app: AppHandle, job: String, paths: Vec<String>, options: ImageOptions, name: String, out_dir: Option<String>) -> CmdResult<Vec<ResultItem>> {
+async fn images_to_pdf(app: AppHandle, job: String, paths: Vec<String>, options: ImageOptions, name: String, numbers: Option<PageNumbers>, out_dir: Option<String>) -> CmdResult<Vec<ResultItem>> {
     blocking(move || {
         let inputs: Vec<PathBuf> = paths.iter().map(PathBuf::from).collect();
         let first = inputs.first().ok_or("Resim yok")?;
         let base = if name.trim().is_empty() { base_name(first) } else { name.trim().to_string() };
         let out = unique_file(&directory_for(first, chosen_dir(&out_dir).as_deref()), &base, "pdf");
         let pages = images::images_to_pdf(&inputs, &options, &out, &reporter(&app, &job)).map_err(err)?;
-        Ok(vec![ResultItem::ok(&out, format!("{pages} sayfa · {}", human_size(file_size(&out))))])
+        Ok(number_results(vec![ResultItem::ok(&out, format!("{pages} sayfa · {}", human_size(file_size(&out))))], &numbers, &inputs))
     })
     .await?
 }
@@ -325,14 +352,14 @@ fn human_size(bytes: u64) -> String {
 // MARK: - Merge / split / organize
 
 #[tauri::command]
-async fn merge(app: AppHandle, job: String, paths: Vec<String>, name: String, out_dir: Option<String>) -> CmdResult<Vec<ResultItem>> {
+async fn merge(app: AppHandle, job: String, paths: Vec<String>, name: String, numbers: Option<PageNumbers>, out_dir: Option<String>) -> CmdResult<Vec<ResultItem>> {
     blocking(move || {
         let inputs: Vec<PathBuf> = paths.iter().map(PathBuf::from).collect();
         let first = inputs.first().ok_or("PDF yok")?;
         let base = if name.trim().is_empty() { "Birleştirilmiş belge".to_string() } else { name.trim().to_string() };
         let out = unique_file(&directory_for(first, chosen_dir(&out_dir).as_deref()), &base, "pdf");
         let pages = ops::merge(&inputs, &out, &reporter(&app, &job)).map_err(err)?;
-        Ok(vec![ResultItem::ok(&out, format!("{} dosya · {pages} sayfa · {}", inputs.len(), human_size(file_size(&out))))])
+        Ok(number_results(vec![ResultItem::ok(&out, format!("{} dosya · {pages} sayfa · {}", inputs.len(), human_size(file_size(&out))))], &numbers, &inputs))
     })
     .await?
 }
@@ -410,7 +437,7 @@ fn export_finish(token: String, sessions: State<'_, Sessions>) {
 // MARK: - UDF → PDF
 
 #[tauri::command]
-async fn udf_to_pdf(app: AppHandle, job: String, paths: Vec<String>, merge: bool, name: String, out_dir: Option<String>) -> CmdResult<Vec<ResultItem>> {
+async fn udf_to_pdf(app: AppHandle, job: String, paths: Vec<String>, merge: bool, name: String, numbers: Option<PageNumbers>, out_dir: Option<String>) -> CmdResult<Vec<ResultItem>> {
     let inputs: Vec<PathBuf> = paths.iter().map(PathBuf::from).collect();
     let first = inputs.first().ok_or("UDF yok")?.clone();
     let merge = merge && inputs.len() > 1;
@@ -419,7 +446,7 @@ async fn udf_to_pdf(app: AppHandle, job: String, paths: Vec<String>, merge: bool
     let merged = unique_file(&directory_for(&first, chosen.as_deref()), &base, "pdf");
     let progress = reporter(&app, &job);
     let results = udf_print::convert_many(&app, &inputs, merge, &merged, |p| directory_for(p, chosen.as_deref()), &progress).await;
-    Ok(results
+    let items = results
         .into_iter()
         .map(|r| match r {
             Ok((path, pages)) => {
@@ -428,7 +455,8 @@ async fn udf_to_pdf(app: AppHandle, job: String, paths: Vec<String>, merge: bool
             }
             Err((title, detail)) => ResultItem::failed(title, detail),
         })
-        .collect())
+        .collect();
+    Ok(number_results(items, &numbers, &inputs))
 }
 
 // MARK: - UDF → Word
@@ -473,7 +501,7 @@ async fn udf_to_docx(app: AppHandle, job: String, paths: Vec<String>, merge: boo
 
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
-async fn convert_to_pdf(app: AppHandle, job: String, paths: Vec<String>, merge: bool, name: String, image_page: images::PageSize, use_office: bool, out_dir: Option<String>) -> CmdResult<Vec<ResultItem>> {
+async fn convert_to_pdf(app: AppHandle, job: String, paths: Vec<String>, merge: bool, name: String, image_page: images::PageSize, use_office: bool, numbers: Option<PageNumbers>, out_dir: Option<String>) -> CmdResult<Vec<ResultItem>> {
     let inputs: Vec<PathBuf> = paths.iter().map(PathBuf::from).collect();
     let first = inputs.first().ok_or("Dosya yok")?.clone();
     let merge = merge && inputs.len() > 1;
@@ -482,7 +510,7 @@ async fn convert_to_pdf(app: AppHandle, job: String, paths: Vec<String>, merge: 
     let merged = unique_file(&directory_for(&first, chosen.as_deref()), &base, "pdf");
     let progress = reporter(&app, &job);
     let results = convert::convert_many(&app, &inputs, merge, &merged, |p| directory_for(p, chosen.as_deref()), image_page, use_office, &progress).await;
-    Ok(results
+    let items = results
         .into_iter()
         .map(|r| match r {
             convert::Outcome::Made(path, pages, how) => {
@@ -492,10 +520,19 @@ async fn convert_to_pdf(app: AppHandle, job: String, paths: Vec<String>, merge: 
                 }
                 ResultItem::ok(&path, detail)
             }
+            // Numbering never touches the original: a numbered copy is made instead.
+            convert::Outcome::Kept(path) if numbers.is_some() => {
+                let out = unique_file(&directory_for(&path, chosen.as_deref()), &format!("{} - numaralı", base_name(&path)), "pdf");
+                match std::fs::copy(&path, &out) {
+                    Ok(_) => ResultItem::ok(&out, format!("{} sayfa · {}", ops::page_count(&out).map(|p| p.0).unwrap_or(0), human_size(file_size(&out)))),
+                    Err(_) => ResultItem::failed(file_name(&path), format!("\"{}\" kopyalanamadı.", file_name(&out))),
+                }
+            }
             convert::Outcome::Kept(path) => ResultItem::ok(&path, "Zaten PDF; olduğu gibi bırakıldı.".into()),
             convert::Outcome::Failed(title, detail) => ResultItem::failed(title, detail),
         })
-        .collect())
+        .collect();
+    Ok(number_results(items, &numbers, &inputs))
 }
 
 // MARK: - PDF / Word → UDF
