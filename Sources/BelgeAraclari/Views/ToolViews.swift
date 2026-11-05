@@ -177,6 +177,46 @@ struct ConvertView: View {
     }
 }
 
+// MARK: - PDF / Word → UDF
+
+struct ToUDFView: View {
+    @Bindable var model: ToUDFModel
+    private let tool = Tool.toUDF
+
+    var body: some View {
+        ToolPage(tool: tool) {
+            FilePicker(store: model.store, tool: tool, title: "PDF veya Word dosyalarını buraya sürükleyin",
+                       subtitle: "PDF, Word (.docx, .doc), RTF ve ODT · Her dosya ayrı bir UDF olur",
+                       listTitle: "Dosyalar")
+
+            VStack(alignment: .leading, spacing: 16) {
+                SectionTitle(text: "Çıktı")
+                if model.hasPDF {
+                    OptionRow(label: "PDF dosyaları") {
+                        Picker("", selection: $model.pdfMode) {
+                            Text("Düzenlenebilir metin").tag(UDFMaker.PDFMode.text)
+                            Text("Birebir görünüm (resim)").tag(UDFMaker.PDFMode.pages)
+                        }
+                        .pickerStyle(.segmented).labelsHidden().frame(maxWidth: 380)
+                    }
+                }
+                Banner(text: model.pdfMode == .pages && model.hasPDF
+                       ? "Her PDF sayfası UDF'ye resim olarak konur: görünüm birebir aynı kalır, ancak metin UYAP'ta düzenlenemez."
+                       : "Yazı tipleri, boyutlar, kalın/italik/altı çizili, renkler, hizalama, girintiler, satır aralığı, sekmeler, listeler, tablolar, resimler, antet, üst/alt bilgi ve sayfa numaraları korunur. PDF'teki dipnotlar belgenin sonuna alınır; taranmış sayfalar resim olarak eklenir. .doc, .rtf ve .odt için Microsoft Word veya LibreOffice gerekir.")
+                Banner(text: "UDF dosyasını UYAP'a göndermeden önce UYAP Doküman Editörü'nde açıp kontrol edin.")
+            }
+            .card()
+
+            ResultsView(job: model.job, tint: tool.tint)
+        } bar: {
+            ActionBar(job: model.job, tool: tool, title: "UDF'ye Çevir",
+                      info: model.store.files.isEmpty ? "Dosya ekleyin" : "\(model.store.files.count) dosya",
+                      disabled: model.store.files.isEmpty, action: model.start)
+        }
+        .animation(.snappy, value: model.store.files.count)
+    }
+}
+
 // MARK: - UDF → PDF / Word
 
 struct UDFView: View {
@@ -427,6 +467,7 @@ struct FilePicker: View {
         case .udf: return FileTypes.udf
         case .office: return FileTypes.office
         case .any: return FileTypes.convertible
+        case .udfSource: return FileTypes.pdf + ["doc", "docx", "rtf", "odt"].compactMap { UTType(filenameExtension: $0) }
         }
     }
 

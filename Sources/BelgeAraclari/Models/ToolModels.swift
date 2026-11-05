@@ -89,6 +89,26 @@ final class UDFModel {
     }
 }
 
+/// "UDF'ye Dönüştür": PDF and Word documents → UYAP UDF.
+@MainActor
+@Observable
+final class ToUDFModel {
+    let store = FileStore(kind: .udfSource)
+    let job = Job()
+    var pdfMode = UDFMaker.PDFMode.text
+
+    var hasPDF: Bool { store.files.contains { FileTypes.isPDF($0.url) } }
+
+    func start() {
+        let urls = store.files.map(\.url)
+        let mode = pdfMode
+        let useInstalled = UserDefaults.standard.object(forKey: SettingsKey.useInstalledOffice) as? Bool ?? true
+        job.run { progress in
+            UDFMaker.convert(urls, pdfMode: mode, useInstalled: useInstalled, progress: progress)
+        }
+    }
+}
+
 /// "PDF'e Dönüştür" (any supported file) and "Office'ten PDF'e" (office files only).
 @MainActor
 @Observable

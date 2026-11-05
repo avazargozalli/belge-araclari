@@ -34,6 +34,7 @@
 | Araç | Ne yapar |
 |---|---|
 | **PDF'e Dönüştür** | Word, Excel, PowerPoint, UDF, resim (JPG, PNG, TIFF…) ve PDF dosyalarını **karışık olarak tek ekrana bırakın**; her birini ayrı PDF yapın veya listedeki sırayla **tek PDF'te birleştirin**. |
+| **UDF'ye Dönüştür** | **PDF** ve **Word** (.docx, .doc, .rtf, .odt) belgelerini UYAP UDF'ye çevirir; yazı tipleri, boyutlar, kalın/italik/altı çizili, renkler, hizalama, girintiler, satır aralığı, sekmeler, listeler, tablolar, resimler, antet, üst/alt bilgi ve sayfa numaraları korunur. PDF'ler için "birebir görünüm" seçeneği her sayfayı resim olarak koyar. |
 | **Office'ten PDF'e** | Word (.docx, .doc, .rtf, .odt), Excel (.xlsx, .xls, .ods, .csv) ve PowerPoint (.pptx, .ppt, .odp) dosyalarını PDF'e çevirir; isterseniz tek PDF'te birleştirir. |
 | **PDF Küçült** | Makul / Daha Küçük / En Küçük seviyeleri. Metin seçilebilir kalır. Taranmış belgeler için ayrıca "taranmış belge modu". Birden fazla dosyayı tek seferde işler. |
 | **UDF Dönüştür** | UYAP belgelerini (.udf) biçimini koruyarak **PDF'e veya Word'e (.docx)** çevirir. Birden fazla UDF'yi sürükleyerek sıralayıp tek PDF'te veya tek Word belgesinde birleştirebilirsiniz. Yazı tipi, kalın/italik/altı çizili, hizalama, girintiler, sekmeler, numaralı listeler, tablolar, resimler, antetli kağıt (arka plan), üst/alt bilgi ve sayfa numaraları korunur; metin seçilebilir kalır. |
@@ -72,6 +73,15 @@ Liste numaraları UYAP'taki gibi metin olarak yazılır: Word'ün harfli numaral
 Word yazıcısı her iki platformun ortak kullandığı Rust çekirdeğindedir (`core/`): Windows sürümü bunu doğrudan içerir, macOS sürümü ise uygulama paketinde `belge-core` adlı küçük bir komut satırı aracı olarak taşır.
 
 **Teşekkür:** UYAP Doküman Editörü'nün bazı öznitelikleri nasıl yorumladığına dair bilgiler (sayfa numarası bitleri, alt düzey liste biçimleri, harfli listelerin Türk alfabesiyle sayılması, tablo sütun oranları ve kenarlık türleri, sekme dolguları), Av. Arb. Mevlana İbrahim Asım Bilir'in [UDF Çevirici](https://github.com/miasimbilir/udf-cevirici) projesinin belgelerinden öğrenilmiştir. O projenin kodu kullanılmamıştır; uygulama bu bilgilerle bağımsız olarak yazılmıştır.
+
+### PDF ve Word'den UDF'ye
+
+Çıktı, UYAP Doküman Editörü'nün kurallarına göre yazılır: tek `content.xml`, `format_id="1.8"`, metnin tamamını boşluksuz kapsayan biçim aralıkları, `<page-break>` ile sayfa sonları, `mediaSizeName` ile kağıt boyutu, UYAP'ın kendi numaralı/madde işaretli listeleri; emoji gibi Editör'ün açamadığı karakterler değiştirilir. Uygulama her dosyayı bu kurallara göre denetler.
+
+- **Word:** Belge Word'ün kurallarıyla (stiller, numaralandırma, sekmeler, tablolar, resimler, üst/alt bilgi, sayfa numarası, sayfa sonları) okunur. Paragraf içi satır sonları ayrı paragraflara bölünür (UDF'de karşılığı yok); harfli listeler UYAP Türk alfabesiyle saydığı için 4. maddeden sonra metin olarak yazılır. .doc, .rtf ve .odt önce kurulu Microsoft Word veya LibreOffice ile .docx'e çevrilir.
+- **PDF:** Sayfanın çizim komutları okunur: her harfin konumu, yazı tipi, boyutu, rengi ve kalın/italikliği; altı çizgiler, vurgular, tablo çizgileri ve resimler. Bunlardan satırlar, paragraflar (hizalama, girinti, satır aralığı, paragraf boşluğu), sekmeler ve dolguları, listeler, çizgili tablolar (birleşik hücreler dahil), her sayfada tekrarlanan üst/alt bilgi, sayfa numarası ve antet yeniden kurulur. Dipnotlar belgenin sonuna alınır; taranmış (metinsiz) sayfalar resim olarak eklenir. Döndürülmüş metin (ör. kenar boşluğundaki dikey sayfa numarası) aktarılmaz.
+
+Dönüştürülen UDF'yi UYAP'a göndermeden önce UYAP Doküman Editörü'nde açıp kontrol edin.
 
 ### Office dosyaları nasıl çevrilir?
 
@@ -149,6 +159,7 @@ Sources/BelgeAraclari/
     UDF.swift                UDF okuma ve TextKit ile PDF'e dizme
     UDFWord.swift            UDF → Word (paketteki belge-core aracını çalıştırır)
     DocumentConverter.swift  Karışık dosyaları ve Office belgelerini PDF'e çevirme
+    UDFMaker.swift           PDF / Word → UDF
   Models/                    Uygulama durumu ve araç modelleri
   Views/                     SwiftUI arayüzü
 Scripts/
@@ -157,6 +168,9 @@ Scripts/
 core/                        Ortak Rust çekirdeği: UDF okuyucu, HTML ve Word (.docx) yazıcıları
   src/udf/docx.rs            UDF → Word
   src/word.rs                Yerleşik Word (.docx) okuyucu
+  src/pdf/                   PDF okuyucu (read.rs) ve sayfa düzeni → UDF (mod.rs)
+  src/udfout.rs              UYAP kurallarına uygun UDF yazıcısı ve denetleyicisi
+  src/convert.rs             PDF / Word → UDF
   src/office.rs              Kurulu Microsoft Office / LibreOffice ile PDF'e çevirme
 windows/                     Windows sürümü (Tauri 2)
   src-tauri/src/engine/      PDF motoru (Rust, lopdf): küçült, resimden PDF, UDF, birleştir, böl, şifrele

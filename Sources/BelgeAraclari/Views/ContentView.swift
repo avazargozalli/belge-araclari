@@ -39,6 +39,7 @@ struct ContentView: View {
         switch state.selection {
         case .tool(.convert): ConvertView(model: state.convert, tool: .convert)
         case .tool(.officeToPDF): ConvertView(model: state.office, tool: .officeToPDF)
+        case .tool(.toUDF): ToUDFView(model: state.toUDF)
         case .tool(.compress): CompressView(model: state.compress)
         case .tool(.imagesToPDF): ImagesView(model: state.images)
         case .tool(.udfToPDF): UDFView(model: state.udf)

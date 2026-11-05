@@ -61,7 +61,7 @@ struct UDFRun {
 }
 
 struct UDFParagraph {
-    let attrs: [String: String]
+    var attrs: [String: String]
     let runs: [UDFRun]
 }
 
@@ -138,8 +138,11 @@ enum UDFParser {
         if let properties = root.elements(forName: "properties").first {
             if let format = properties.elements(forName: "pageFormat").first {
                 let a = attributes(of: format)
-                // pageWidth/pageHeight (portrait, points) are written by the Word reader for non-A4 paper.
-                var size = CGSize(width: max(72, number(a["pageWidth"], 595.28)), height: max(72, number(a["pageHeight"], 841.89)))
+                // mediaSizeName: 1 A4, 2 A5, 3 Letter, 4 B5, 5 Legal, 6 Executive (portrait sizes).
+                let sizes: [String: CGSize] = ["1": CGSize(width: 595.28, height: 841.89), "2": CGSize(width: 419.53, height: 595.28),
+                                               "3": CGSize(width: 612, height: 792), "4": CGSize(width: 515.91, height: 728.5),
+                                               "5": CGSize(width: 612, height: 1008), "6": CGSize(width: 522, height: 756)]
+                var size = sizes[a["mediaSizeName"] ?? "1"] ?? sizes["1"]!
                 if a["paperOrientation"] == "0" { size = CGSize(width: size.height, height: size.width) }
                 doc.pageSize = size
                 doc.margins = NSEdgeInsets(top: number(a["topMargin"], 42.5), left: number(a["leftMargin"], 42.5),
@@ -170,6 +173,16 @@ enum UDFParser {
                 doc.footerPageNumber = pageNumber(attributes(of: child))
             case "paragraph":
                 doc.body.append(.paragraph(paragraph(child, base: base, styles: doc.styles)))
+            case "page-break":
+                // A page break wraps one (empty) paragraph; what follows starts a new page.
+                for block in blocks(in: child, base: base, styles: doc.styles) {
+                    if case .paragraph(var p) = block {
+                        p.attrs["pageBreakBefore"] = "true"
+                        doc.body.append(.paragraph(p))
+                    } else {
+                        doc.body.append(block)
+                    }
+                }
             case "table":
                 doc.body.append(.table(table(child, base: base, styles: doc.styles)))
             default:

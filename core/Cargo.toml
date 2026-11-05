@@ -1,6 +1,6 @@
 [package]
 name = "belge-core"
-version = "1.4.0"
+version = "1.5.0"
 description = "Belge Araçları ortak çekirdeği: UYAP UDF okuyucu, HTML ve Word (.docx) yazıcıları"
 authors = ["Azar Gozalli"]
 license = "MIT"
@@ -18,6 +18,8 @@ path = "src/main.rs"
 roxmltree = "0.20"
 zip = { version = "2", default-features = false, features = ["deflate"] }
 base64 = "0.22"
+lopdf = "0.42"
+flate2 = "1"
 
 [profile.release]
 opt-level = 3

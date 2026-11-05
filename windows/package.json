@@ -1,6 +1,6 @@
 {
   "name": "belge-araclari-windows",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "private": true,
   "type": "module",
   "description": "Belge Araçları — Windows sürümü (Tauri). Geliştiren: Azar Gozalli",

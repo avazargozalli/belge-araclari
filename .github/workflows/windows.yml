@@ -192,6 +192,49 @@ jobs:
           print("Word → PDF content: passed")
           EOF
 
+      - name: Convert the PDF and the Word file back to UDF with the installed app
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $destination = Join-Path $env:RUNNER_TEMP 'belge-araclari'
+          $exe = Get-ChildItem "$destination/*.exe" | Where-Object { $_.Name -notmatch 'uninstall' } | Select-Object -First 1
+          $dir = Join-Path $env:RUNNER_TEMP 'udf-check'
+          foreach ($pair in @(@('ornek-dilekce.pdf', 'from-pdf.udf'), @('ornek-dilekce.docx', 'from-docx.udf'))) {
+            $in = Join-Path $dir $pair[0]; $out = Join-Path $dir $pair[1]
+            $process = Start-Process -FilePath $exe.FullName -ArgumentList @('--to-udf', "`"$in`"", "`"$out`"") -PassThru
+            if (-not $process.WaitForExit(60000)) { Stop-Process -Id $process.Id -Force; throw "$($pair[0]) to UDF timed out" }
+            if ($process.ExitCode -ne 0) { throw "$($pair[0]) to UDF failed with exit code $($process.ExitCode)" }
+            if (-not (Test-Path $out)) { throw "$($pair[0]) to UDF produced no file" }
+            Write-Output "$($pair[0]) → UDF: $((Get-Item $out).Length) bytes"
+          }
+
+      - name: Check the UDF files follow the Editör rules
+        env:
+          PYTHONIOENCODING: utf-8
+        run: |
+          python - "$RUNNER_TEMP/udf-check/from-pdf.udf" "$RUNNER_TEMP/udf-check/from-docx.udf" <<'EOF'
+          import sys, zipfile
+          import xml.etree.ElementTree as ET
+          for path in sys.argv[1:]:
+              names = zipfile.ZipFile(path).namelist()
+              assert names == ["content.xml"], names
+              root = ET.fromstring(zipfile.ZipFile(path).read("content.xml"))
+              assert root.get("format_id") == "1.8"
+              text = root.find("content").text or ""
+              units = len(text.encode("utf-16-le")) // 2
+              assert all(ord(c) <= 0xFFFF for c in text), "non-BMP character"
+              offset = 0
+              for el in root.find("elements").iter():
+                  if el.tag in ("content", "image"):
+                      start, length = int(el.get("startOffset")), int(el.get("length"))
+                      assert start == offset, f"gap at {offset} (found {start})"
+                      offset = start + length
+              assert offset == units, f"offsets cover {offset} of {units}"
+              assert "MAHKEMES" in text and "Tablo hücresi metni" in text, "text missing"
+              assert root.find("elements").find(".//table") is not None, "table missing"
+              print(path, "valid:", units, "characters")
+          EOF
+
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
@@ -200,6 +243,7 @@ jobs:
           path: |
             ${{ runner.temp }}/udf-check/*.pdf
             ${{ runner.temp }}/udf-check/*.docx
+            ${{ runner.temp }}/udf-check/*.udf
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:

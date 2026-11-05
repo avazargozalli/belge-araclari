@@ -164,13 +164,17 @@ fn word_reader_keeps_text_lists_tables_and_page_numbers() {
     let xml = crate::word::docx_to_content_xml(&sample_docx()).unwrap();
     let doc = udf::parse_xml(&xml).unwrap();
     let html = udf::body_html(&doc);
-    // Numbering: Word's own rules (decimal, then English letters).
-    for text in ["DİLEKÇE", "1.\tBirinci", "a)\tAlt", "2.\tİkinci", "Birleşik", "İçindekiler", "Dipnot metni."] {
+    for text in ["DİLEKÇE", "Birinci", "Alt", "İkinci", "Birleşik", "İçindekiler", "Dipnot metni."] {
         assert!(xml.contains(text), "{text} eksik");
     }
+    // Native UYAP lists: decimal "%1." and letters "%2)" (agree with Word up to c).
+    assert!(xml.contains("Numbered=\"true\" NumberType=\"NUMBER_TYPE_NUMBER_DOT\" ListId=\"1\" ListLevel=\"1\""), "{xml}");
+    assert!(xml.contains("NumberType=\"NUMBER_TYPE_CHAR_SMALL_PARANTHESE\" ListId=\"1\" ListLevel=\"2\" SecListTypeLevel2=\"NUMBER_TYPE_CHAR_SMALL_PARANTHESE\""));
+    assert!(xml.contains("<page-break>"), "sayfa sonu öğesi");
+    assert!(crate::udfout::validate(&xml).is_empty(), "{:?}", crate::udfout::validate(&xml));
     assert!(html.contains("<table"), "tablo");
     assert!(html.contains("colspan=\"2\""), "birleşik hücre");
-    assert!(html.contains("break-before:page"), "sayfa sonu");
+    assert!(html.contains("break-before:page"), "sayfa sonu çizilir");
     assert!(xml.contains("pageNumber-spec=\"BSP32_2120\""), "sağa hizalı sayfa/toplam: {}", &xml[xml.find("<header").unwrap()..][..300]);
     assert!(xml.contains("pageNumber-foreStr=\"Sayfa \"") || xml.contains("pageNumber-foreStr=\"Sayfa\""));
     assert!(xml.contains("border=\"borderCell\""));
@@ -208,4 +212,70 @@ fn office_file_kinds() {
     assert!(is_builtin(Path::new("a.docx")) && !is_builtin(Path::new("a.doc")));
     assert_eq!(kind(Path::new("x.ods")), Some(Kind::Excel));
     assert_eq!(kind(Path::new("x.odp")), Some(Kind::PowerPoint));
+}
+
+// MARK: - PDF reader
+
+/// A one-page PDF: a bold red title, a body line, and a ruled 2×2 table.
+fn sample_pdf() -> Vec<u8> {
+    use lopdf::{dictionary, Object, Stream};
+    let mut doc = lopdf::Document::with_version("1.5");
+    let pages_id = doc.new_object_id();
+    let regular = doc.add_object(dictionary! { "Type" => "Font", "Subtype" => "Type1", "BaseFont" => "Times-Roman", "Encoding" => "WinAnsiEncoding" });
+    let bold = doc.add_object(dictionary! { "Type" => "Font", "Subtype" => "Type1", "BaseFont" => "Times-Bold", "Encoding" => "WinAnsiEncoding" });
+    let content = b"BT /F2 14 Tf 1 0 0 rg 200 780 Td (DILEKCE) Tj ET \
+BT /F1 12 Tf 0 0 0 rg 72 750 Td (Birinci satir metni.) Tj ET \
+0 0 0 RG 0.5 w 72 700 m 372 700 l S 72 680 m 372 680 l S 72 660 m 372 660 l S \
+72 700 m 72 660 l S 222 700 m 222 660 l S 372 700 m 372 660 l S \
+BT /F1 12 Tf 76 686 Td (Donem) Tj ET BT /F1 12 Tf 226 686 Td (Tutar) Tj ET \
+BT /F1 12 Tf 76 666 Td (Agustos) Tj ET BT /F1 12 Tf 226 666 Td (15.000) Tj ET"
+        .to_vec();
+    let content_id = doc.add_object(Stream::new(dictionary! {}, content));
+    let page = doc.add_object(dictionary! {
+        "Type" => "Page", "Parent" => pages_id, "MediaBox" => vec![0.into(), 0.into(), 595.into(), 842.into()],
+        "Contents" => content_id, "Resources" => dictionary! { "Font" => dictionary! { "F1" => regular, "F2" => bold } },
+    });
+    doc.objects.insert(pages_id, Object::Dictionary(dictionary! { "Type" => "Pages", "Kids" => vec![page.into()], "Count" => 1 }));
+    let catalog = doc.add_object(dictionary! { "Type" => "Catalog", "Pages" => pages_id });
+    doc.trailer.set("Root", catalog);
+    let mut out = vec![];
+    doc.save_to(&mut out).unwrap();
+    out
+}
+
+#[test]
+fn pdf_reader_keeps_text_styles_and_tables() {
+    let xml = crate::pdf::pdf_to_content_xml(&sample_pdf()).unwrap();
+    assert!(crate::udfout::validate(&xml).is_empty(), "{:?}", crate::udfout::validate(&xml));
+    for text in ["DILEKCE", "Birinci satir metni.", "Donem", "Tutar", "Agustos", "15.000"] {
+        assert!(xml.contains(text), "{text} eksik: {xml}");
+    }
+    // Bold red title, Times New Roman, 14 pt.
+    assert!(xml.contains("family=\"Times New Roman\" size=\"14\" bold=\"true\""), "{xml}");
+    assert!(xml.contains("foreground=\"-65536\""), "kırmızı");
+    // The ruled grid becomes a 2-column table with every line drawn.
+    let doc = udf::parse_xml(&xml).unwrap();
+    let html = udf::body_html(&doc);
+    assert_eq!(html.matches("<td").count(), 4, "{html}");
+    assert!(xml.contains("border=\"borderCell\""));
+}
+
+#[test]
+fn pdf_font_names_become_families() {
+    use crate::pdf::read::font_style;
+    let s = font_style("ABCDEF+TimesNewRomanPS-BoldItalicMT", 0, 0.0);
+    assert_eq!((s.family.as_str(), s.bold, s.italic), ("Times New Roman", true, true));
+    assert_eq!(font_style("ArialMT", 0, 0.0).family, "Arial");
+    assert_eq!(font_style("Calibri-Bold", 0, 0.0).family, "Calibri");
+    assert_eq!(font_style("Times-Roman", 0, 0.0).family, "Times New Roman");
+    assert_eq!(font_style("BookmanOldStyle", 0, 0.0).family, "Bookman Old Style");
+}
+
+#[test]
+fn pages_as_pictures_make_one_page_each() {
+    let png = crate::pdf::read::png(2, 2, 3, &[255; 12]);
+    let xml = crate::pdf::pages_to_content_xml(&[(png.clone(), 595.0, 842.0), (png, 595.0, 842.0)]);
+    assert!(crate::udfout::validate(&xml).is_empty());
+    assert_eq!(xml.matches("<image ").count(), 2);
+    assert_eq!(xml.matches("<page-break>").count(), 1);
 }

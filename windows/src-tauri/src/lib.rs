@@ -282,6 +282,21 @@ async fn scan_finish(token: String, path: String, out_dir: Option<String>, sessi
     .await
 }
 
+/// "UDF'ye Dönüştür", exact mode: the pages the UI rendered become one picture each.
+#[tauri::command]
+async fn pages_udf_finish(token: String, path: String, out_dir: Option<String>, sessions: State<'_, Sessions>) -> CmdResult<ResultItem> {
+    let pages = sessions.scans.lock().unwrap().remove(&token).ok_or("Oturum bulunamadı")?;
+    blocking(move || {
+        let input = PathBuf::from(&path);
+        let out = unique_file(&directory_for(&input, chosen_dir(&out_dir).as_deref()), &base_name(&input), "udf");
+        match belge_core::pdf::pages_to_udf(&pages, &out) {
+            Ok(()) => ResultItem::ok(&out, format!("UDF · {} · sayfalar resim olarak", human_size(file_size(&out)))),
+            Err(e) => ResultItem::failed(file_name(&input), e),
+        }
+    })
+    .await
+}
+
 #[tauri::command]
 fn scan_dpi(level: Level) -> u32 {
     level.scan_dpi()
@@ -483,6 +498,32 @@ async fn convert_to_pdf(app: AppHandle, job: String, paths: Vec<String>, merge: 
         .collect())
 }
 
+// MARK: - PDF / Word → UDF
+
+#[tauri::command]
+async fn to_udf(app: AppHandle, job: String, paths: Vec<String>, use_office: bool, out_dir: Option<String>) -> CmdResult<Vec<ResultItem>> {
+    blocking(move || {
+        let progress = reporter(&app, &job);
+        paths
+            .iter()
+            .enumerate()
+            .map(|(i, path)| {
+                let input = PathBuf::from(path);
+                progress(i as f64 / paths.len() as f64, &format!("Dönüştürülüyor: {}", file_name(&input)));
+                let out = unique_file(&directory_for(&input, chosen_dir(&out_dir).as_deref()), &base_name(&input), "udf");
+                match belge_core::convert::to_udf(&input, &out, use_office) {
+                    Ok(how) => ResultItem::ok(&out, format!("UDF · {} · {how}", human_size(file_size(&out)))),
+                    Err(e) => {
+                        let _ = std::fs::remove_file(&out);
+                        ResultItem::failed(file_name(&input), e)
+                    }
+                }
+            })
+            .collect()
+    })
+    .await
+}
+
 /// Office suites found on this computer, for the settings dialog.
 #[tauri::command]
 async fn office_engines() -> CmdResult<Vec<String>> {
@@ -502,6 +543,20 @@ fn cli_udf_request() -> Option<(PathBuf, PathBuf)> {
 /// no window, so it runs before Tauri starts.
 fn cli_docx_request() -> Option<i32> {
     let args: Vec<String> = std::env::args().collect();
+    // `--to-udf input.pdf|.docx output.udf` (PDF and Word → UDF) works the same way.
+    if let Some(i) = args.iter().position(|a| a == "--to-udf") {
+        let (input, output) = (PathBuf::from(args.get(i + 1)?), PathBuf::from(args.get(i + 2)?));
+        return Some(match belge_core::convert::to_udf(&input, &output, true) {
+            Ok(how) => {
+                println!("{how} → {}", output.display());
+                0
+            }
+            Err(e) => {
+                eprintln!("{e}");
+                1
+            }
+        });
+    }
     let i = args.iter().position(|a| a == "--udf-to-docx")?;
     let (input, output) = (PathBuf::from(args.get(i + 1)?), PathBuf::from(args.get(i + 2)?));
     Some(match udf::docx::convert(&[input], &output) {
@@ -564,7 +619,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             file_info, read_pdf, thumbnail, open_path, reveal_path, ghostscript, initial_files,
             compress, scan_begin, scan_page, scan_finish, scan_dpi,
-            images_to_pdf, udf_to_pdf, udf_to_docx, convert_to_pdf, office_engines, merge, split, organize,
+            images_to_pdf, udf_to_pdf, udf_to_docx, convert_to_pdf, office_engines, to_udf, pages_udf_finish, merge, split, organize,
             export_begin, export_page, export_finish, protect
         ])
         .setup(|app| {

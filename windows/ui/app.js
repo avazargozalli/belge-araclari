@@ -21,6 +21,8 @@ const TOOLS = [
     subtitle: 'JPG, PNG, WEBP ve TIFF resimlerini tek PDF yapın.' },
   { id: 'udf', icon: 'udf', title: 'UDF Dönüştür', tint: 'var(--red)', accepts: 'udf',
     subtitle: "UYAP UDF belgelerini biçimini koruyarak PDF'e veya Word'e çevirin, isterseniz tek dosyada birleştirin." },
+  { id: 'toUdf', icon: 'toUdf', title: "UDF'ye Dönüştür", tint: 'var(--wine)', accepts: 'udfsource',
+    subtitle: 'PDF ve Word belgelerini yazı tipi, hizalama, tablo ve antetiyle birlikte UYAP UDF belgesine çevirin.' },
   { id: 'office', icon: 'office', title: "Office'ten PDF'e", tint: 'var(--navy)', accepts: 'office',
     subtitle: 'Word, Excel ve PowerPoint dosyalarını PDF\'e çevirin, isterseniz tek PDF\'te birleştirin.' },
   { id: 'merge', icon: 'merge', title: 'PDF Birleştir', tint: 'var(--purple)', accepts: 'pdf',
@@ -58,6 +60,7 @@ const state = {
   tools: {
     convert: { files: [], merge: false, name: '', imagePage: 'a4', job: newJob() },
     office: { files: [], merge: false, name: '', imagePage: 'a4', job: newJob() },
+    toUdf: { files: [], pdfMode: 'text', job: newJob() },
     compress: { files: [], level: 'balanced', scan: false, job: newJob() },
     images: { files: [], options: { pageSize: 'a4', orientation: 'auto', margin: 'none', quality: 'balanced' }, name: '', job: newJob() },
     udf: { files: [], format: 'pdf', merge: true, name: '', job: newJob() },
@@ -94,6 +97,12 @@ const baseName = (path) => (path.split(/[\\/]/).pop() || '').replace(/\.[^.]+$/,
 const OFFICE = ['doc', 'docx', 'docm', 'dot', 'dotx', 'dotm', 'rtf', 'odt', 'ott', 'wpd', 'xls', 'xlsx', 'xlsm', 'xlsb', 'xlt', 'xltx', 'ods', 'ots', 'csv',
   'ppt', 'pptx', 'pptm', 'pps', 'ppsx', 'pot', 'potx', 'odp', 'otp'];
 
+const WORD = ['doc', 'docx', 'docm', 'dot', 'dotx', 'dotm', 'rtf', 'odt', 'ott'];
+const isWord = (path) => WORD.includes(path.split('.').pop().toLowerCase());
+/** Whether a described file is accepted by a tool. */
+const accepts = (tool, f) => tool.accepts === 'any' || f.kind === tool.accepts
+  || (tool.accepts === 'udfsource' && (f.kind === 'pdf' || (f.kind === 'office' && isWord(f.path))));
+
 async function pickFiles(kind, multiple) {
   const images = ['jpg', 'jpeg', 'png', 'webp', 'tif', 'tiff', 'gif', 'bmp'];
   const filters = {
@@ -101,6 +110,7 @@ async function pickFiles(kind, multiple) {
     image: [{ name: 'Resimler', extensions: images }],
     udf: [{ name: 'UYAP UDF', extensions: ['udf'] }],
     office: [{ name: 'Word, Excel, PowerPoint', extensions: OFFICE }],
+    udfsource: [{ name: 'PDF ve Word', extensions: ['pdf', ...WORD] }],
   }[kind] || [{ name: 'PDF, Office, UDF ve resimler', extensions: ['pdf', 'udf', ...OFFICE, ...images] }];
   const picked = await tauri()?.dialog.open({ multiple, filters });
   if (!picked) return [];
@@ -116,7 +126,7 @@ async function describe(paths) {
 
 async function addFiles(toolId, paths) {
   const tool = toolById[toolId];
-  const infos = (await describe(paths)).filter((f) => tool.accepts === 'any' || f.kind === tool.accepts);
+  const infos = (await describe(paths)).filter((f) => accepts(tool, f));
   if (!infos.length) return;
   if (toolId === 'organize') return loadOrganize(infos[0]);
   const t = state.tools[toolId];
@@ -132,6 +142,7 @@ async function addFiles(toolId, paths) {
  * macOS: a mix of kinds goes to "PDF'e Dönüştür", office files alone to "Office'ten PDF'e". */
 async function routeFiles(paths) {
   const infos = await describe(paths);
+  if (state.view === 'toUdf') return addFiles('toUdf', infos.map((f) => f.path));
   const kinds = new Set(infos.map((f) => f.kind));
   if (state.view === 'convert' || kinds.size > 1) {
     state.view = 'convert';
@@ -221,6 +232,36 @@ const actions = {
   },
 
   convert() { runConvert('convert'); },
+
+  toUdf() {
+    const t = state.tools.toUdf;
+    runJob('toUdf', async (job, report) => {
+      const pages = t.pdfMode === 'pages' ? t.files.filter((f) => f.kind === 'pdf') : [];
+      const rest = t.files.filter((f) => !pages.includes(f));
+      const results = rest.length
+        ? await invoke('to_udf', { job: job.id, paths: rest.map((f) => f.path), useOffice: state.settings.useOffice, outDir: outDir() })
+        : [];
+      // Exact mode: every page rendered here becomes one picture in the UDF.
+      for (const [i, file] of pages.entries()) {
+        try {
+          const doc = await openPdf(await readPdf(file.path));
+          const token = await invoke('scan_begin');
+          for (let n = 1; n <= doc.numPages; n++) {
+            report((i + n / doc.numPages) / pages.length, `${file.name}: sayfa ${n} / ${doc.numPages}`);
+            const { blob, widthPt, heightPt } = await renderPage(doc, n, { dpi: 120, quality: 0.75 });
+            await invoke('scan_page', new Uint8Array(await blob.arrayBuffer()), {
+              headers: { 'x-token': token, 'x-width': String(widthPt), 'x-height': String(heightPt) },
+            });
+          }
+          closePdf(doc);
+          results.push(await invoke('pages_udf_finish', { token, path: file.path, outDir: outDir() }));
+        } catch (error) {
+          results.push({ title: file.name, detail: String(error?.message || error), success: false });
+        }
+      }
+      return results;
+    });
+  },
   office() { runConvert('office'); },
 
   udf() {
@@ -484,6 +525,18 @@ function toolBody(id) {
             : banner("Makul seçenek dosyayı bozmadan küçültmeyi hedefler. Zaten optimize edilmiş PDF'lerde boyut her zaman azalmayabilir; bu durumda yeni dosya oluşturulmaz.")}
         </div>`;
     }
+    case 'toUdf': {
+      const hasPdf = t.files.some((f) => f.kind === 'pdf');
+      return filePicker(id, { title: 'PDF veya Word dosyalarını buraya sürükleyin', text: 'PDF, Word (.docx, .doc), RTF ve ODT · Her dosya ayrı bir UDF olur', listTitle: 'Dosyalar' }) + `
+        <div class="card pad">
+          <p class="eyebrow">Çıktı</p>
+          ${hasPdf ? `<div class="option-row"><span class="label">PDF dosyaları</span>${segmented('pdfMode', t.pdfMode, [['text', 'Düzenlenebilir metin'], ['pages', 'Birebir görünüm (resim)']])}</div>` : ''}
+          ${t.pdfMode === 'pages' && hasPdf
+            ? banner('Her PDF sayfası UDF\'ye resim olarak konur: görünüm birebir aynı kalır, ancak metin UYAP\'ta düzenlenemez.')
+            : banner('Yazı tipleri, boyutlar, kalın/italik/altı çizili, renkler, hizalama, girintiler, satır aralığı, sekmeler, listeler, tablolar, resimler, antet, üst/alt bilgi ve sayfa numaraları korunur. PDF\'teki dipnotlar belgenin sonuna alınır; taranmış sayfalar resim olarak eklenir. .doc, .rtf ve .odt için Microsoft Word veya LibreOffice gerekir.')}
+          ${banner("UDF dosyasını UYAP'a göndermeden önce UYAP Doküman Editörü'nde açıp kontrol edin.")}
+        </div>`;
+    }
     case 'convert':
     case 'office': {
       const many = t.files.length > 1;
@@ -629,7 +682,7 @@ function actionBarHtml(id) {
   const tool = toolById[id];
   const t = state.tools[id];
   const job = t.job;
-  const label = { convert: t.merge && t.files?.length > 1 ? 'Birleştir ve PDF Yap' : "PDF'e Çevir", office: t.merge && t.files?.length > 1 ? 'Birleştir ve PDF Yap' : "PDF'e Çevir",
+  const label = { toUdf: "UDF'ye Çevir", convert: t.merge && t.files?.length > 1 ? 'Birleştir ve PDF Yap' : "PDF'e Çevir", office: t.merge && t.files?.length > 1 ? 'Birleştir ve PDF Yap' : "PDF'e Çevir",
     compress: 'PDF Küçült', images: 'PDF Oluştur', udf: t.merge && t.files?.length > 1 ? (t.format === 'docx' ? 'Birleştir ve Word Yap' : 'Birleştir ve PDF Yap') : (t.format === 'docx' ? "Word'e Çevir" : "PDF'e Çevir"), merge: 'Birleştir', split: 'Böl', organize: 'Kaydet',
     pdfToImages: 'Görsellere Dönüştür', protect: t.mode === 'encrypt' ? 'Şifrele' : 'Şifreyi Kaldır' }[id];
   let info = '';
@@ -638,6 +691,7 @@ function actionBarHtml(id) {
     case 'compress': info = t.files.length ? `${t.files.length} PDF · ${formatBytes(totalSize(t.files))}` : 'PDF ekleyin'; disabled = !t.files.length; break;
     case 'images': info = t.files.length ? `${totalPages(t.files)} sayfa oluşturulacak` : 'Resim ekleyin'; disabled = !t.files.length; break;
     case 'udf': info = t.files.length ? `${t.files.length} UDF` : 'UDF ekleyin'; disabled = !t.files.length; break;
+    case 'toUdf': info = t.files.length ? `${t.files.length} dosya` : 'Dosya ekleyin'; disabled = !t.files.length; break;
     case 'convert': case 'office': info = t.files.length ? `${t.files.length} dosya` : 'Dosya ekleyin'; disabled = !t.files.length; break;
     case 'merge': info = t.files.length < 2 ? 'En az iki PDF ekleyin' : `${t.files.length} dosya · ${totalPages(t.files)} sayfa`; disabled = t.files.length < 2; break;
     case 'split': info = t.files[0] ? `${t.files[0].pages} sayfa` : 'PDF ekleyin'; disabled = !t.files.length || (t.mode === 'ranges' && !t.ranges.trim()); break;

@@ -80,7 +80,7 @@ struct AboutView: View {
                 Text("Belge Araçları").font(.title.weight(.bold))
                 Text("Sürüm \(AppInfo.version)").foregroundStyle(.secondary)
             }
-            Text("Word, Excel, UDF ve resimlerden PDF, UDF’ten Word’e, PDF küçültme, birleştirme, bölme, sayfa düzenleme ve şifreleme. Tamamen yerel çalışır; hiçbir dosya veya veri internete gönderilmez.")
+            Text("Word, Excel, UDF ve resimlerden PDF, PDF ve Word’den UDF’ye, UDF’ten Word’e, PDF küçültme, birleştirme, bölme, sayfa düzenleme ve şifreleme. Tamamen yerel çalışır; hiçbir dosya veya veri internete gönderilmez.")
                 .multilineTextAlignment(.center)
                 .font(.callout)
                 .foregroundStyle(.secondary)

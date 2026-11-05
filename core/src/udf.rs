@@ -159,9 +159,11 @@ pub fn parse_xml(xml: &str) -> std::result::Result<UdfDocument, String> {
     if let Some(props) = child("properties") {
         if let Some(format) = props.children().find(|n| n.has_tag_name("pageFormat")) {
             let a = attrs_of(format);
-            // pageWidth/pageHeight (portrait, points) are written by the Word reader for non-A4 paper.
-            doc.page_width = num(a.get("pageWidth"), 595.28).max(72.0);
-            doc.page_height = num(a.get("pageHeight"), 841.89).max(72.0);
+            // mediaSizeName: 1 A4, 2 A5, 3 Letter, 4 B5, 5 Legal, 6 Executive (portrait sizes).
+            if let Some((w, h)) = a.get("mediaSizeName").and_then(|c| crate::udfout::media_size(c)) {
+                doc.page_width = w;
+                doc.page_height = h;
+            }
             if a.get("paperOrientation").map(String::as_str) == Some("0") {
                 std::mem::swap(&mut doc.page_width, &mut doc.page_height);
             }
@@ -193,6 +195,15 @@ pub fn parse_xml(xml: &str) -> std::result::Result<UdfDocument, String> {
                 doc.footer_number = page_number(&attrs_of(node));
             }
             "paragraph" => doc.body.push(Block::Paragraph(paragraph(node, &base, &styles))),
+            // A page break wraps one (empty) paragraph; what follows starts a new page.
+            "page-break" => {
+                for mut block in blocks(node, &base, &styles) {
+                    if let Block::Paragraph(p) = &mut block {
+                        p.attrs.insert("pageBreakBefore".into(), "true".into());
+                    }
+                    doc.body.push(block);
+                }
+            }
             "table" => doc.body.push(table(node, &base, &styles)),
             _ => {}
         }

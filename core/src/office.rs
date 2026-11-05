@@ -54,6 +54,23 @@ pub fn kind(path: &Path) -> Option<Kind> {
     })
 }
 
+/// What to convert to.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Target {
+    Pdf,
+    /// Word documents only (.doc, .rtf, .odt → .docx), for the built-in Word reader.
+    Docx,
+}
+
+impl Target {
+    fn extension(self) -> &'static str {
+        match self {
+            Target::Pdf => "pdf",
+            Target::Docx => "docx",
+        }
+    }
+}
+
 #[derive(Debug)]
 pub enum ExternalError {
     /// No installed suite can open this file.
@@ -142,18 +159,18 @@ fn file_url(path: &Path) -> String {
     out
 }
 
-fn via_libreoffice(soffice: &Path, input: &Path, output: &Path) -> Result<(), String> {
+fn via_libreoffice(soffice: &Path, input: &Path, output: &Path, target: Target) -> Result<(), String> {
     let dir = scratch()?;
     let result = (|| {
         // A private profile, so a LibreOffice window the user has open does not block us.
         let mut cmd = Command::new(soffice);
         cmd.arg(format!("-env:UserInstallation={}", file_url(&dir.join("profile"))))
-            .args(["--headless", "--norestore", "--nolockcheck", "--nodefault", "--nologo", "--convert-to", "pdf", "--outdir"])
+            .args(["--headless", "--norestore", "--nolockcheck", "--nodefault", "--nologo", "--convert-to", target.extension(), "--outdir"])
             .arg(dir.join("out"))
             .arg(input);
         let (_, _, err) = run(cmd)?;
         let stem = input.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
-        place(&dir.join("out").join(format!("{stem}.pdf")), output).map_err(|e| if err.trim().is_empty() { e } else { format!("{e} ({})", err.trim()) })
+        place(&dir.join("out").join(format!("{stem}.{}", target.extension())), output).map_err(|e| if err.trim().is_empty() { e } else { format!("{e} ({})", err.trim()) })
     })();
     let _ = std::fs::remove_dir_all(&dir);
     result
@@ -164,7 +181,7 @@ fn via_libreoffice(soffice: &Path, input: &Path, output: &Path) -> Result<(), St
 #[cfg(windows)]
 const POWERSHELL: &str = r#"
 $ErrorActionPreference = 'Stop'
-$in = $env:BELGE_IN; $out = $env:BELGE_OUT; $kind = $env:BELGE_KIND
+$in = $env:BELGE_IN; $out = $env:BELGE_OUT; $kind = $env:BELGE_KIND; $target = $env:BELGE_TARGET
 $progId = @{ word = 'Word.Application'; excel = 'Excel.Application'; powerpoint = 'PowerPoint.Application' }[$kind]
 try { $app = New-Object -ComObject $progId } catch { exit 3 }
 $code = 0
@@ -174,7 +191,7 @@ try {
       $app.Visible = $false; $app.DisplayAlerts = 0
       # A dummy password makes protected files fail instead of waiting for a password prompt.
       $d = $app.Documents.Open($in, $false, $true, $false, 'belge-x')
-      try { $d.ExportAsFixedFormat($out, 17) } finally { $d.Close(0) }
+      try { if ($target -eq 'docx') { $d.SaveAs2($out, 16) } else { $d.ExportAsFixedFormat($out, 17) } } finally { $d.Close(0) }
       if ($app.Documents.Count -eq 0) { $app.Quit() }
     }
     'excel' {
@@ -198,16 +215,17 @@ exit $code
 "#;
 
 #[cfg(windows)]
-fn via_microsoft(kind: Kind, input: &Path, output: &Path) -> Result<(), ExternalError> {
+fn via_microsoft(kind: Kind, input: &Path, output: &Path, target: Target) -> Result<(), ExternalError> {
     use base64::Engine as _;
     let script: Vec<u8> = POWERSHELL.encode_utf16().flat_map(u16::to_le_bytes).collect();
     let dir = scratch().map_err(ExternalError::Failed)?;
-    let produced = dir.join("out.pdf");
+    let produced = dir.join(format!("out.{}", target.extension()));
     let mut cmd = Command::new("powershell.exe");
     cmd.args(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand"])
         .arg(base64::engine::general_purpose::STANDARD.encode(script))
         .env("BELGE_IN", input)
         .env("BELGE_OUT", &produced)
+        .env("BELGE_TARGET", target.extension())
         .env("BELGE_KIND", match kind {
             Kind::Word => "word",
             Kind::Excel => "excel",
@@ -226,7 +244,7 @@ fn via_microsoft(kind: Kind, input: &Path, output: &Path) -> Result<(), External
 // MARK: - Microsoft Office on macOS
 
 #[cfg(target_os = "macos")]
-fn via_microsoft(kind: Kind, input: &Path, output: &Path) -> Result<(), ExternalError> {
+fn via_microsoft(kind: Kind, input: &Path, output: &Path, target: Target) -> Result<(), ExternalError> {
     let (bundle, container) = match kind {
         Kind::Word => ("Microsoft Word", "com.microsoft.Word"),
         Kind::Excel => ("Microsoft Excel", "com.microsoft.Excel"),
@@ -241,7 +259,7 @@ fn via_microsoft(kind: Kind, input: &Path, output: &Path) -> Result<(), External
     std::fs::create_dir_all(&dir).map_err(|e| ExternalError::Failed(e.to_string()))?;
     let name = format!("belge-{}.{}", rand_suffix() % 1_000_000_000, extension(input));
     let copy = dir.join(&name);
-    let produced = dir.join("out.pdf");
+    let produced = dir.join(format!("out.{}", target.extension()));
     let result = (|| {
         std::fs::copy(input, &copy).map_err(|e| ExternalError::Failed(e.to_string()))?;
         // Opening through Launch Services skips Office's start screen, which blocks scripting.
@@ -256,13 +274,14 @@ fn via_microsoft(kind: Kind, input: &Path, output: &Path) -> Result<(), External
             return Err(ExternalError::Unavailable);
         }
         let (collection, save) = match kind {
+            Kind::Word if target == Target::Docx => ("document", "save as document docName file name outHFS file format format document"),
             Kind::Word => ("document", "save as document docName file name outHFS file format format PDF"),
             Kind::Excel => ("workbook", "save workbook as workbook docName filename outHFS file format PDF file format"),
             Kind::PowerPoint => ("presentation", "save presentation docName in outHFS as save as PDF"),
         };
         let script = format!(
             r#"on run argv
-	set {{outPath, docName, wasRunning}} to argv
+	set {{outPath, docName, wasRunning, outName}} to argv
 	-- Converted outside the tell block: Office cannot coerce a POSIX path held in a variable.
 	set outHFS to (POSIX file outPath) as text
 	tell application "{bundle}"
@@ -283,13 +302,17 @@ fn via_microsoft(kind: Kind, input: &Path, output: &Path) -> Result<(), External
 		try
 			close {collection} docName saving no
 		end try
+		-- "Save as" another format renames the open document to the new file.
+		try
+			close {collection} outName saving no
+		end try
 		if (count of {collection}s) is 0 and wasRunning is "false" then quit saving no
 	end tell
 	if lastError is not "" then error lastError
 end run"#
         );
         let mut cmd = Command::new("/usr/bin/osascript");
-        cmd.arg("-e").arg(script).arg(&produced).arg(&name).arg(was_running.to_string());
+        cmd.arg("-e").arg(script).arg(&produced).arg(&name).arg(was_running.to_string()).arg(format!("out.{}", target.extension()));
         match run(cmd) {
             Ok((0, _, _)) => {}
             Ok((_, _, err)) if err.contains("-1743") => {
@@ -314,7 +337,7 @@ end run"#
 }
 
 #[cfg(not(any(windows, target_os = "macos")))]
-fn via_microsoft(_: Kind, _: &Path, _: &Path) -> Result<(), ExternalError> {
+fn via_microsoft(_: Kind, _: &Path, _: &Path, _: Target) -> Result<(), ExternalError> {
     Err(ExternalError::Unavailable)
 }
 
@@ -325,21 +348,29 @@ fn first_line(err: &str, kind: Kind) -> String {
 
 // MARK: - Entry point
 
-/// Converts with the best installed suite. Returns the name of the program that did it.
+/// Converts to PDF with the best installed suite. Returns the name of the program that did it.
 pub fn convert_external(input: &Path, output: &Path) -> Result<&'static str, ExternalError> {
+    convert_external_to(input, output, Target::Pdf)
+}
+
+/// Converts with the best installed suite. Returns the name of the program that did it.
+pub fn convert_external_to(input: &Path, output: &Path, target: Target) -> Result<&'static str, ExternalError> {
     let kind = kind(input).ok_or(ExternalError::Unavailable)?;
+    if target == Target::Docx && kind != Kind::Word {
+        return Err(ExternalError::Unavailable);
+    }
     let mut failure = None;
     // .odt/.ods/.odp and friends open best in LibreOffice; Microsoft formats in Microsoft Office.
     let open_document = extension(input).starts_with('o');
     if !open_document || libreoffice().is_none() {
-        match via_microsoft(kind, input, output) {
+        match via_microsoft(kind, input, output, target) {
             Ok(()) => return Ok(kind.app_name()),
             Err(ExternalError::Failed(e)) => failure = Some(e),
             Err(ExternalError::Unavailable) => {}
         }
     }
     if let Some(soffice) = libreoffice() {
-        match via_libreoffice(&soffice, input, output) {
+        match via_libreoffice(&soffice, input, output, target) {
             Ok(()) => return Ok("LibreOffice"),
             Err(e) => failure = Some(failure.map_or(e.clone(), |f| format!("{f} / LibreOffice: {e}"))),
         }

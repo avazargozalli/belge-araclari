@@ -9,12 +9,12 @@
 //! or footer becomes the UDF page number.
 
 use std::collections::HashMap;
-use std::fmt::Write as _;
-use std::io::{Read, Write as _};
+use std::io::Read;
 use std::path::Path;
 
-use base64::Engine as _;
 use roxmltree::Node;
+
+use crate::udfout::{self, Background, Block, Cell, Document, Field, Line, ListItem, Para, ParaProps, Piece, RunProps, TabOp, Table};
 
 type Doc<'a> = roxmltree::Document<'a>;
 
@@ -48,31 +48,7 @@ fn on(n: Node) -> bool {
 
 // MARK: - Properties
 
-#[derive(Clone, Default, Debug)]
-struct RunProps {
-    font: Option<String>,
-    size: Option<f32>,
-    bold: Option<bool>,
-    italic: Option<bool>,
-    underline: Option<bool>,
-    strike: Option<bool>,
-    color: Option<Option<u32>>,
-    background: Option<Option<u32>>,
-    vert: Option<i8>,
-    caps: Option<bool>,
-    hidden: Option<bool>,
-    turkish: Option<bool>,
-}
-
-macro_rules! overlay {
-    ($self:ident, $other:ident, $($f:ident),*) => { $( if $other.$f.is_some() { $self.$f = $other.$f.clone(); } )* };
-}
-
 impl RunProps {
-    fn apply(&mut self, o: &RunProps) {
-        overlay!(self, o, font, size, bold, italic, underline, strike, color, background, vert, caps, hidden, turkish);
-    }
-
     fn read(n: Option<Node>, theme: &Theme) -> RunProps {
         let mut p = RunProps::default();
         let Some(n) = n else { return p };
@@ -142,41 +118,7 @@ fn highlight(name: &str) -> Option<u32> {
     })
 }
 
-#[derive(Clone, Copy, Debug)]
-enum Line {
-    Auto(f32),
-    Exact(f32),
-    AtLeast(f32),
-}
-
-#[derive(Clone, Debug)]
-enum TabOp {
-    Set(f32, u8, u8),
-    Clear(f32),
-}
-
-#[derive(Clone, Default, Debug)]
-struct ParaProps {
-    align: Option<u8>,
-    left: Option<f32>,
-    right: Option<f32>,
-    /// Positive: first-line indent; negative: hanging indent.
-    first: Option<f32>,
-    before: Option<f32>,
-    after: Option<f32>,
-    line: Option<Line>,
-    tabs: Vec<TabOp>,
-    num: Option<(String, u32)>,
-    contextual: Option<bool>,
-    page_break: Option<bool>,
-}
-
 impl ParaProps {
-    fn apply(&mut self, o: &ParaProps) {
-        overlay!(self, o, align, left, right, first, before, after, line, num, contextual, page_break);
-        self.tabs.extend(o.tabs.iter().cloned());
-    }
-
     fn read(n: Option<Node>) -> ParaProps {
         let mut p = ParaProps::default();
         let Some(n) = n else { return p };
@@ -261,22 +203,6 @@ impl ParaProps {
             }
         }
         p
-    }
-
-    /// Tab stops after applying set/clear operations in order, sorted by position.
-    fn stops(&self) -> Vec<(f32, u8, u8)> {
-        let mut out: Vec<(f32, u8, u8)> = vec![];
-        for op in &self.tabs {
-            match op {
-                TabOp::Set(pos, a, l) => {
-                    out.retain(|s| (s.0 - pos).abs() > 0.5);
-                    out.push((*pos, *a, *l));
-                }
-                TabOp::Clear(pos) => out.retain(|s| (s.0 - pos).abs() > 0.5),
-            }
-        }
-        out.sort_by(|a, b| a.0.total_cmp(&b.0));
-        out
     }
 }
 
@@ -384,8 +310,8 @@ impl Numbering {
         self.abstracts.get(abs)?.get(level as usize)
     }
 
-    /// The label for the next item of list `id` at `level`.
-    fn next(&mut self, id: &str, level: u32) -> Option<(String, Level)> {
+    /// The label for the next item of list `id` at `level`, its level and its number.
+    fn next(&mut self, id: &str, level: u32) -> Option<(String, Level, i64)> {
         let (abs, overrides) = self.nums.get(id)?.clone();
         let levels = self.abstracts.get(&abs)?.clone();
         let lvl = levels.get(level as usize)?.clone();
@@ -396,8 +322,9 @@ impl Numbering {
         }
         let start = |l: usize| overrides.get(&(l as u32)).copied().unwrap_or_else(|| levels.get(l).map_or(1, |x| x.start));
         counters[level] = Some(counters[level].map_or(start(level), |n| n + 1));
+        let number = counters[level].unwrap_or(1);
         if lvl.format == "none" {
-            return Some((String::new(), lvl));
+            return Some((String::new(), lvl, number));
         }
         let mut text = lvl.text.clone();
         for (i, l) in levels.iter().enumerate().take(9) {
@@ -410,8 +337,51 @@ impl Numbering {
         if lvl.format == "bullet" {
             text = text.chars().map(bullet_char).collect();
         }
-        Some((text, lvl))
+        Some((text, lvl, number))
     }
+}
+
+/// The Editör's list type for a Word list level, when it draws the same label.
+fn native_kind(level: &Level, number: i64) -> Option<String> {
+    if level.format == "bullet" {
+        let symbol = level.text.chars().map(bullet_char).next()?;
+        return Some(
+            match symbol {
+                '\u{25AA}' | '\u{25A0}' => "BULLET_TYPE_RECTANGLE",
+                '\u{25AB}' | '\u{25A1}' => "BULLET_TYPE_RECTANGLE_D",
+                '\u{25C6}' | '\u{2756}' => "BULLET_TYPE_DIAMOND",
+                '\u{27A2}' | '\u{27A4}' => "BULLET_TYPE_ARROW",
+                '\u{25B6}' | '\u{25BA}' => "BULLET_TYPE_TRIANGLE",
+                '\u{2022}' | '\u{25CF}' | 'o' | '\u{25E6}' => "BULLET_TYPE_ELLIPSE",
+                _ => return None,
+            }
+            .into(),
+        );
+    }
+    let family = match level.format.as_str() {
+        "decimal" => "NUMBER",
+        // Letters agree only up to "c": the Editör continues with "ç".
+        "lowerLetter" if number <= 3 => "CHAR_SMALL",
+        "upperLetter" if number <= 3 => "CHAR_BIG",
+        "lowerRoman" => "ROMAN_SMALL",
+        "upperRoman" => "ROMAN_BIG",
+        _ => return None,
+    };
+    // Only "%N" with one of the Editör's suffixes, and no other level's number in the label.
+    let text = &level.text;
+    let n = text.find('%')?;
+    if text.matches('%').count() != 1 || n > 1 {
+        return None;
+    }
+    let rest = text.get(n + 2..)?;
+    let suffix = match (&text[..n], rest) {
+        ("", ".") => "DOT",
+        ("", ")") => "PARANTHESE",
+        ("(", ")") => "D_PARANTHESE",
+        ("", "-") => "TRE",
+        _ => return None,
+    };
+    Some(format!("NUMBER_TYPE_{family}_{suffix}"))
 }
 
 fn roman(mut n: i64) -> String {
@@ -457,52 +427,6 @@ fn bullet_char(c: char) -> char {
         0xE000..=0xF8FF => '\u{2022}',
         _ => c,
     }
-}
-
-// MARK: - Content model
-
-#[derive(Clone, Copy, PartialEq)]
-enum Field {
-    Page,
-    Total,
-}
-
-enum Piece {
-    Text(String, RunProps),
-    Image { data: Vec<u8>, width: f32, height: f32, props: RunProps },
-    Field(Field, RunProps),
-}
-
-struct Para {
-    /// From a text box or other floating shape.
-    floating: bool,
-    props: ParaProps,
-    mark: RunProps,
-    style: Option<String>,
-    pieces: Vec<Piece>,
-}
-
-struct Cell {
-    span: usize,
-    blocks: Vec<Block>,
-}
-
-struct Table {
-    grid: Vec<f32>,
-    indent: f32,
-    border: &'static str,
-    rows: Vec<Vec<Cell>>,
-}
-
-enum Block {
-    Para(Para),
-    Table(Table),
-}
-
-struct Background {
-    data: Vec<u8>,
-    /// Position and size on the page, in points.
-    rect: [f32; 4],
 }
 
 // MARK: - Reader
@@ -780,10 +704,14 @@ impl<'p> Reader<'p> {
 
     fn paragraph(&mut self, p: Node, ctx: &mut Ctx, out: &mut Vec<Block>) {
         let (props, mark, style) = self.para_props(Some(p));
-        let mut para = Para { floating: ctx.floating, props, mark, style, pieces: vec![] };
+        let mut para = Para { floating: ctx.floating, props, mark, style, ..Default::default() };
         if let Some((id, level)) = para.props.num.clone().filter(|(id, _)| id != "0") {
-            if let Some((label, lvl)) = self.numbering.next(&id, level) {
-                if !label.is_empty() {
+            if let Some((label, lvl, number)) = self.numbering.next(&id, level) {
+                // Native UYAP list where the Editör draws the same label; text otherwise (the
+                // Editör counts letters with the Turkish alphabet, Word with the English one).
+                if let Some(kind) = native_kind(&lvl, number) {
+                    para.list = Some(ListItem { numbered: lvl.format != "bullet", kind, id: id.clone(), level: level + 1, number });
+                } else if !label.is_empty() {
                     let mut run = para.mark.clone();
                     run.underline = Some(false);
                     run.strike = Some(false);
@@ -1065,7 +993,7 @@ fn push_text(para: &mut Para, text: &str, props: &RunProps) {
     }
     let text = if props.caps == Some(true) { upper(text, props.turkish.unwrap_or(false)) } else { text.to_string() };
     if let Some(Piece::Text(last, p)) = para.pieces.last_mut() {
-        if same_look(p, props) {
+        if p.same_look(props) {
             last.push_str(&text);
             return;
         }
@@ -1073,9 +1001,6 @@ fn push_text(para: &mut Para, text: &str, props: &RunProps) {
     para.pieces.push(Piece::Text(text, props.clone()));
 }
 
-fn same_look(a: &RunProps, b: &RunProps) -> bool {
-    a.font == b.font && a.size == b.size && a.bold == b.bold && a.italic == b.italic && a.underline == b.underline && a.strike == b.strike && a.color == b.color && a.background == b.background && a.vert == b.vert
-}
 
 fn upper(text: &str, turkish: bool) -> String {
     text.chars()
@@ -1115,329 +1040,6 @@ fn position(p: Option<Node>, size: f32, page: f32, margin: f32, area: f32) -> f3
     }
 }
 
-// MARK: - UDF writer
-
-/// Java's signed ARGB integer for an opaque colour.
-fn argb(rgb: u32) -> i32 {
-    (0xFF00_0000u32 | rgb) as i32
-}
-
-fn num_text(v: f32) -> String {
-    let s = format!("{v:.2}");
-    s.trim_end_matches('0').trim_end_matches('.').to_string()
-}
-
-fn attr_escape(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    for c in text.chars() {
-        match c {
-            '&' => out.push_str("&amp;"),
-            '<' => out.push_str("&lt;"),
-            '>' => out.push_str("&gt;"),
-            '"' => out.push_str("&quot;"),
-            '\n' => out.push_str("&#10;"),
-            '\t' => out.push_str("&#9;"),
-            c if (c as u32) < 0x20 => {}
-            c => out.push(c),
-        }
-    }
-    out
-}
-
-/// Characters UDF's XML can hold (form feeds become a page-break attribute instead).
-fn clean(text: &str) -> String {
-    text.chars().filter(|c| !((*c as u32) < 0x20 && !matches!(c, '\t' | '\n')) && !matches!(c, '\u{FFFE}' | '\u{FFFF}')).collect()
-}
-
-struct Writer {
-    text: String,
-    units: usize,
-    out: String,
-    content_width: f32,
-    default_tab: f32,
-}
-
-impl Writer {
-    fn add(&mut self, text: &str) -> (usize, usize) {
-        let start = self.units;
-        let len = text.encode_utf16().count();
-        self.text.push_str(text);
-        self.units += len;
-        (start, len)
-    }
-
-    fn run_attrs(p: &RunProps) -> String {
-        let font = p.font.clone().unwrap_or_else(|| "Times New Roman".into());
-        let mut a = format!(
-            "family=\"{}\" size=\"{}\" bold=\"{}\" italic=\"{}\" underline=\"{}\" strikethrough=\"{}\" superscript=\"{}\" subscript=\"{}\" foreground=\"{}\"",
-            attr_escape(&font),
-            num_text(p.size.unwrap_or(10.0)),
-            p.bold.unwrap_or(false),
-            p.italic.unwrap_or(false),
-            p.underline.unwrap_or(false),
-            p.strike.unwrap_or(false),
-            p.vert == Some(1),
-            p.vert == Some(-1),
-            argb(p.color.flatten().unwrap_or(0)),
-        );
-        match p.background.flatten() {
-            Some(bg) => write!(a, " background=\"{}\"", argb(bg)).ok(),
-            None => write!(a, " background=\"\"").ok(),
-        };
-        a
-    }
-
-    fn paragraph(&mut self, p: &Para, next_style_same: bool, prev_contextual_same: bool, break_before: bool) {
-        let props = &p.props;
-        let size = p.mark.size.unwrap_or(10.0).max(1.0);
-        // Word: first line at left + first, wrapped lines at left. UDF: first line at LeftIndent +
-        // FirstLineIndent, wrapped lines at LeftIndent + Hanging.
-        let left = props.left.unwrap_or(0.0).max(0.0);
-        let first = props.first.unwrap_or(0.0);
-        let (udf_left, udf_first, udf_hanging) = if first >= 0.0 { (left, first, 0.0) } else { let l = (left + first).max(0.0); (l, 0.0, left - l) };
-        let mut stops: Vec<(f32, u8, u8)> = props.stops();
-        if first < 0.0 && !stops.iter().any(|s| (s.0 - left).abs() < 0.5) {
-            // Word's hanging indent doubles as a tab stop (list numbers tab to the text).
-            stops.push((left, 0, 0));
-            stops.sort_by(|a, b| a.0.total_cmp(&b.0));
-        }
-        // Past the last explicit stop Word continues on its default grid.
-        let last = stops.last().map_or(0.0, |s| s.0);
-        let mut k = (last / self.default_tab).floor() + 1.0;
-        while k * self.default_tab < self.content_width + self.default_tab && stops.len() < 60 {
-            stops.push((k * self.default_tab, 0, 0));
-            k += 1.0;
-        }
-        let tabset: Vec<String> = stops
-            .iter()
-            .filter(|s| s.0 - udf_left > 0.25)
-            .map(|(pos, a, l)| format!("{}:{a}:{l}", num_text(pos - udf_left)))
-            .collect();
-        let line = match props.line {
-            Some(Line::Auto(k)) => k - 1.0,
-            Some(Line::Exact(pt)) => pt / (size * 1.15) - 1.0,
-            Some(Line::AtLeast(pt)) => (pt / (size * 1.15)).max(1.0) - 1.0,
-            None => 0.0,
-        };
-        let contextual = props.contextual == Some(true);
-        let before = if contextual && prev_contextual_same { 0.0 } else { props.before.unwrap_or(0.0) };
-        let after = if contextual && next_style_same { 0.0 } else { props.after.unwrap_or(0.0) };
-        let page_break = props.page_break == Some(true) || break_before || page_break_at_start(p);
-        write!(
-            self.out,
-            "<paragraph Alignment=\"{}\" LeftIndent=\"{}\" RightIndent=\"{}\" FirstLineIndent=\"{}\" Hanging=\"{}\" LineSpacing=\"{}\" SpaceAbove=\"{}\" SpaceBelow=\"{}\" TabSet=\"{}\"{} {}>",
-            props.align.unwrap_or(0),
-            num_text(udf_left),
-            num_text(props.right.unwrap_or(0.0).max(0.0)),
-            num_text(udf_first),
-            num_text(udf_hanging),
-            num_text(line.max(-0.3)),
-            num_text(before.max(0.0)),
-            num_text(after.max(0.0)),
-            tabset.join(","),
-            if page_break { " pageBreakBefore=\"true\"" } else { "" },
-            Self::run_attrs(&p.mark),
-        )
-        .ok();
-        let mut wrote_text = false;
-        let count = p.pieces.len();
-        for (i, piece) in p.pieces.iter().enumerate() {
-            let last_piece = i + 1 == count;
-            match piece {
-                Piece::Text(text, props) => {
-                    let mut text = clean(text);
-                    if last_piece {
-                        text.push('\n');
-                    }
-                    if text.is_empty() {
-                        continue;
-                    }
-                    let (start, len) = self.add(&text);
-                    write!(self.out, "<content startOffset=\"{start}\" length=\"{len}\" {}/>", Self::run_attrs(props)).ok();
-                    wrote_text = true;
-                }
-                Piece::Image { data, width, height, props } => {
-                    let (start, len) = self.add(" ");
-                    let mut size = String::new();
-                    if *width > 0.0 && *height > 0.0 {
-                        size = format!(" width=\"{}\" height=\"{}\"", num_text(*width), num_text(*height));
-                    }
-                    write!(
-                        self.out,
-                        "<image startOffset=\"{start}\" length=\"{len}\" imageData=\"{}\"{size} {}/>",
-                        base64::engine::general_purpose::STANDARD.encode(data),
-                        Self::run_attrs(props)
-                    )
-                    .ok();
-                    if last_piece {
-                        let (start, len) = self.add("\n");
-                        write!(self.out, "<content startOffset=\"{start}\" length=\"{len}\" {}/>", Self::run_attrs(props)).ok();
-                    }
-                    wrote_text = true;
-                }
-                Piece::Field(..) => {}
-            }
-        }
-        if !wrote_text || matches!(p.pieces.last(), Some(Piece::Field(..))) {
-            let (start, len) = self.add("\n");
-            write!(self.out, "<content startOffset=\"{start}\" length=\"{len}\" {}/>", Self::run_attrs(&p.mark)).ok();
-        }
-        self.out.push_str("</paragraph>");
-    }
-
-    fn blocks(&mut self, blocks: &[Block], width: f32) {
-        let saved = self.content_width;
-        self.content_width = width;
-        // A page break inside a paragraph's text moves the following paragraph to a new page.
-        let mut pending_break = false;
-        for (i, block) in blocks.iter().enumerate() {
-            match block {
-                Block::Para(p) => {
-                    let same = |other: Option<&Block>| matches!(other, Some(Block::Para(o)) if o.style == p.style);
-                    let prev_same = i > 0 && same(blocks.get(i - 1)) && matches!(blocks.get(i - 1), Some(Block::Para(o)) if o.props.contextual == Some(true));
-                    self.paragraph(p, same(blocks.get(i + 1)), prev_same, pending_break);
-                    pending_break = !page_break_at_start(p) && p.pieces.iter().any(|x| matches!(x, Piece::Text(t, _) if t.contains('\u{000C}')));
-                }
-                Block::Table(t) => {
-                    self.table(t, width);
-                    pending_break = false;
-                }
-            }
-        }
-        self.content_width = saved;
-    }
-
-    fn table(&mut self, t: &Table, width: f32) {
-        let total: f32 = t.grid.iter().sum();
-        let left = t.indent.max(0.0);
-        let right = (width - left - total).max(0.0);
-        let spans = |cells: &[Cell]| -> Vec<f32> {
-            let mut col = 0;
-            cells
-                .iter()
-                .map(|c| {
-                    let w: f32 = t.grid.iter().skip(col).take(c.span).sum();
-                    col += c.span;
-                    w.max(1.0)
-                })
-                .collect()
-        };
-        let join = |v: &[f32]| v.iter().map(|w| num_text(*w)).collect::<Vec<_>>().join(",");
-        write!(
-            self.out,
-            "<table tableName=\"Tablo\" columnCount=\"{}\" columnSpans=\"{}\" border=\"{}\" LeftIndent=\"{}\" RightIndent=\"{}\">",
-            t.grid.len(),
-            join(&t.grid),
-            t.border,
-            num_text(left),
-            num_text(right)
-        )
-        .ok();
-        for (r, row) in t.rows.iter().enumerate() {
-            let widths = spans(row);
-            write!(self.out, "<row rowName=\"row{}\" rowType=\"dataRow\" columnSpans=\"{}\">", r + 1, join(&widths)).ok();
-            for (cell, w) in row.iter().zip(&widths) {
-                self.out.push_str("<cell>");
-                if cell.blocks.is_empty() {
-                    let (start, len) = self.add("\n");
-                    write!(self.out, "<paragraph><content startOffset=\"{start}\" length=\"{len}\"/></paragraph>").ok();
-                } else {
-                    self.blocks(&cell.blocks, *w - 2.0);
-                }
-                self.out.push_str("</cell>");
-            }
-            self.out.push_str("</row>");
-        }
-        self.out.push_str("</table>");
-    }
-}
-
-/// Whether a page break comes before any visible content of the paragraph.
-fn page_break_at_start(p: &Para) -> bool {
-    for piece in &p.pieces {
-        match piece {
-            Piece::Text(t, _) => {
-                let t = t.trim_start_matches(|c: char| c.is_whitespace() && c != '\u{000C}');
-                if t.starts_with('\u{000C}') {
-                    return true;
-                }
-                if !t.is_empty() {
-                    return false;
-                }
-            }
-            _ => return false,
-        }
-    }
-    false
-}
-
-/// Takes the paragraph holding a PAGE field out of a header/footer and describes it as UDF
-/// page-number attributes. Also says whether it came from a floating shape (often a rotated box in
-/// the margin), which UDF cannot place; those go to the bottom right instead.
-fn page_number(blocks: &mut Vec<Block>) -> Option<(String, bool)> {
-    let index = blocks.iter().position(|b| matches!(b, Block::Para(p) if p.pieces.iter().any(|x| matches!(x, Piece::Field(Field::Page, _)))))?;
-    let Block::Para(mut p) = blocks.remove(index) else { return None };
-    let floating = p.floating;
-    if floating {
-        p.props.align = Some(2);
-    }
-    let (mut fore, mut sep, mut after) = (String::new(), String::new(), String::new());
-    let mut stage = 0;
-    let mut total = false;
-    let mut font = p.mark.clone();
-    for piece in &p.pieces {
-        match piece {
-            Piece::Text(t, _) => {
-                let t = t.replace(['\t', '\u{2028}', '\u{000C}'], " ");
-                match stage {
-                    0 => fore.push_str(&t),
-                    1 => sep.push_str(&t),
-                    _ => after.push_str(&t),
-                }
-            }
-            Piece::Field(Field::Page, props) => {
-                font = props.clone();
-                stage = stage.max(1);
-            }
-            Piece::Field(Field::Total, _) => {
-                total = true;
-                stage = 2;
-            }
-            Piece::Image { .. } => {}
-        }
-    }
-    if !total {
-        after = sep.clone() + &after;
-        sep = "/".into();
-    }
-    let mut flags = 8;
-    match p.props.align {
-        Some(1) => flags |= 32,
-        Some(2) => flags |= 64,
-        _ => {}
-    }
-    if total {
-        flags |= 2048;
-    }
-    let mut a = format!(
-        " pageNumber-spec=\"BSP32_{flags}\" pageNumber-foreStr=\"{}\" pageNumber-afterStr=\"{}\" pageNumber-seperator=\"{}\" pageNumber-fontFace=\"{}\" pageNumber-fontSize=\"{}\"",
-        attr_escape(fore.trim_start()),
-        attr_escape(after.trim_end()),
-        attr_escape(&sep),
-        attr_escape(font.font.as_deref().unwrap_or("Times New Roman")),
-        num_text(if floating { font.size.unwrap_or(10.0).min(11.0) } else { font.size.unwrap_or(10.0) }),
-    );
-    for (key, value) in [("Bold", font.bold), ("Italic", font.italic), ("Underline", font.underline)] {
-        if value == Some(true) {
-            write!(a, " pageNumber-font{key}=\"true\"").ok();
-        }
-    }
-    if let Some(c) = font.color.flatten() {
-        write!(a, " pageNumber-color=\"{}\"", argb(c)).ok();
-    }
-    Some((a, floating))
-}
-
 fn footnote_blocks(reader: &mut Reader) -> Vec<Block> {
     let ids = std::mem::take(&mut reader.used_notes);
     let mut out = vec![];
@@ -1446,7 +1048,7 @@ fn footnote_blocks(reader: &mut Reader) -> Vec<Block> {
         if out.is_empty() {
             let mut mark = reader.styles.run.clone();
             mark.size = Some(9.0);
-            out.push(Block::Para(Para { floating: false, props: ParaProps { before: Some(12.0), ..Default::default() }, mark: mark.clone(), style: None, pieces: vec![Piece::Text("______________________".into(), mark)] }));
+            out.push(Block::Para(Para { props: ParaProps { before: Some(12.0), ..Default::default() }, mark: mark.clone(), pieces: vec![Piece::Text("______________________".into(), mark)], ..Default::default() }));
         }
         if let Some(Block::Para(first)) = blocks.first_mut() {
             // Word puts the note's own reference mark first; renumber it to match the text.
@@ -1505,8 +1107,8 @@ pub fn docx_to_content_xml(bytes: &[u8]) -> Result<String, String> {
     let mut footer = footer_part.map(|p| reader.part(&p, true)).unwrap_or_default();
     let mut body_blocks = reader.part("word/document.xml", false);
     body_blocks.extend(footnote_blocks(&mut reader));
-    let mut header_number = page_number(&mut header);
-    let mut footer_number = page_number(&mut footer);
+    let mut header_number = udfout::page_number(&mut header);
+    let mut footer_number = udfout::page_number(&mut footer);
     if header_number.as_ref().is_some_and(|n| n.1) && footer_number.is_none() {
         footer_number = header_number.take();
     }
@@ -1521,73 +1123,26 @@ pub fn docx_to_content_xml(bytes: &[u8]) -> Result<String, String> {
         footer.clear();
     }
 
-    let [w, h] = reader.page;
-    let [mt, mr, mb, ml] = reader.margins;
-    let content_width = (w - ml - mr).max(50.0);
-    let mut writer = Writer { text: String::new(), units: 0, out: String::new(), content_width, default_tab: reader.default_tab };
-    let mut elements = String::new();
-    for (tag, blocks, number) in [("header", &header, &header_number), ("footer", &footer, &footer_number)] {
-        if blocks.is_empty() && number.is_none() {
-            continue;
-        }
-        writer.out.clear();
-        writer.blocks(blocks, content_width);
-        write!(elements, "<{tag} background=\"-1\" foreground=\"-16777216\"{}>{}</{tag}>", number.as_deref().unwrap_or(""), writer.out).ok();
-    }
-    writer.out.clear();
-    if body_blocks.is_empty() {
-        body_blocks.push(Block::Para(Para { floating: false, props: ParaProps::default(), mark: reader.styles.run.clone(), style: None, pieces: vec![] }));
-    }
-    writer.blocks(&body_blocks, content_width);
-    elements.push_str(&writer.out);
-
-    let landscape = w > h;
-    let (pw, ph) = if landscape { (h, w) } else { (w, h) };
-    let mut properties = format!(
-        "<pageFormat mediaSizeName=\"1\" leftMargin=\"{}\" rightMargin=\"{}\" topMargin=\"{}\" bottomMargin=\"{}\" paperOrientation=\"{}\" headerFOffset=\"{}\" footerFOffset=\"{}\" pageWidth=\"{}\" pageHeight=\"{}\"/>",
-        num_text(ml),
-        num_text(mr),
-        num_text(mt),
-        num_text(mb),
-        if landscape { 0 } else { 1 },
-        num_text(header_offset),
-        num_text(footer_offset),
-        num_text(pw),
-        num_text(ph),
-    );
-    if let Some(bg) = &reader.background {
-        let [x, y, bw, bh] = bg.rect;
-        write!(
-            properties,
-            "<bgImage bgImageData=\"{}\" bgImageUpMargin=\"{}\" bgImageLeftMargin=\"{}\" bgImageBottomMargin=\"{}\" bgImageRigtMargin=\"{}\"/>",
-            base64::engine::general_purpose::STANDARD.encode(&bg.data),
-            num_text(y),
-            num_text(x),
-            num_text(h - y - bh),
-            num_text(w - x - bw)
-        )
-        .ok();
-    }
     let font = reader.styles.run.font.clone().unwrap_or_else(|| "Times New Roman".into());
     let size = reader.styles.run.size.unwrap_or(10.0);
-    let text = writer.text.replace("]]>", "]]]]><![CDATA[>");
-    Ok(format!(
-        "<?xml version=\"1.0\" encoding=\"UTF-8\" ?>\n<template format_id=\"1.8\" >\n<content><![CDATA[{text}]]></content>\n<properties>{properties}</properties>\n\
-<elements resolver=\"hvl-default\" >{elements}</elements>\n<styles><style name=\"default\" description=\"Geçerli\" family=\"{f}\" size=\"{s}\"/>\
-<style name=\"hvl-default\" family=\"{f}\" size=\"{s}\" description=\"Gövde\"/></styles>\n</template>\n",
-        f = attr_escape(&font),
-        s = num_text(size),
-    ))
+    Ok(udfout::write(&Document {
+        page: reader.page,
+        margins: reader.margins,
+        header_offset,
+        footer_offset,
+        header,
+        footer,
+        body: body_blocks,
+        header_number,
+        footer_number,
+        background: reader.background.take(),
+        font,
+        size,
+        default_tab: reader.default_tab,
+    }))
 }
 
-/// Wraps a `content.xml` into a .udf (ZIP) file.
-pub fn udf_bytes(content_xml: &str) -> Result<Vec<u8>, String> {
-    let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
-    let options = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
-    zip.start_file("content.xml", options).map_err(|e| e.to_string())?;
-    zip.write_all(content_xml.as_bytes()).map_err(|e| e.to_string())?;
-    zip.finish().map(|c| c.into_inner()).map_err(|e| e.to_string())
-}
+pub use crate::udfout::udf_bytes;
 
 /// Reads a .docx file and writes it as a .udf file.
 pub fn docx_to_udf(input: &Path, output: &Path) -> Result<(), String> {
